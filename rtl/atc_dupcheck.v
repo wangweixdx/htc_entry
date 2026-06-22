@@ -15,12 +15,12 @@ module atc_dupcheck (
     input  [15:0]                   dup_req_func_id,
     input  [63:0]                   dup_req_va,
     input  [4:0]                    dup_req_stu,
-    output                          dup_req_ready,
+    output reg                      dup_req_ready,
 
     // ---- Duplicate check result ----
-    output                          dup_rsp_valid,
-    output                          duplicate,
-    output [10:0]                   dup_entry_idx,
+    output reg                      dup_rsp_valid,
+    output reg                      duplicate,
+    output reg [10:0]               dup_entry_idx,
 
     // ---- Entry Array Interface (wide read of subset: 8 sets × 64 ways) ----
     output [2:0]                    ea_subset_id,
@@ -100,6 +100,7 @@ module atc_dupcheck (
     //=========================================================================
     wire [7:0][63:0] way_match;    // per set, per way
     wire [7:0]       set_has_match;
+    wire [511:0]     way_match_flat; // flat for iverilog procedural access
 
     genvar s, w;
     generate
@@ -121,6 +122,7 @@ module atc_dupcheck (
                     (!pv_nz && (ea_funcids[s][w] == stored_func_id)
                              && (addr_masked_entry == dup_addr_masked))
                 );
+                assign way_match_flat[s*64 + w] = way_match[s][w];
             end
 
             assign set_has_match[s] = |way_match[s];
@@ -160,7 +162,7 @@ module atc_dupcheck (
                         for (s_idx = 0; s_idx < 8; s_idx = s_idx + 1) begin
                             if (set_has_match[s_idx]) begin
                                 for (w_idx = 0; w_idx < 64; w_idx = w_idx + 1) begin
-                                    if (way_match[s_idx][w_idx]) begin
+                                    if (way_match_flat[s_idx*64 + w_idx]) begin
                                         subset_match_idx[0] <= {s_idx[4:0], w_idx[5:0]};
                                     end
                                 end
@@ -175,7 +177,7 @@ module atc_dupcheck (
                         for (s_idx = 0; s_idx < 8; s_idx = s_idx + 1) begin
                             if (set_has_match[s_idx]) begin
                                 for (w_idx = 0; w_idx < 64; w_idx = w_idx + 1) begin
-                                    if (way_match[s_idx][w_idx]) begin
+                                    if (way_match_flat[s_idx*64 + w_idx]) begin
                                         subset_match_idx[1] <= {s_idx[4:0] + 5'd8, w_idx[5:0]};
                                     end
                                 end
@@ -190,7 +192,7 @@ module atc_dupcheck (
                         for (s_idx = 0; s_idx < 8; s_idx = s_idx + 1) begin
                             if (set_has_match[s_idx]) begin
                                 for (w_idx = 0; w_idx < 64; w_idx = w_idx + 1) begin
-                                    if (way_match[s_idx][w_idx]) begin
+                                    if (way_match_flat[s_idx*64 + w_idx]) begin
                                         subset_match_idx[2] <= {s_idx[4:0] + 5'd16, w_idx[5:0]};
                                     end
                                 end
@@ -205,7 +207,7 @@ module atc_dupcheck (
                         for (s_idx = 0; s_idx < 8; s_idx = s_idx + 1) begin
                             if (set_has_match[s_idx]) begin
                                 for (w_idx = 0; w_idx < 64; w_idx = w_idx + 1) begin
-                                    if (way_match[s_idx][w_idx]) begin
+                                    if (way_match_flat[s_idx*64 + w_idx]) begin
                                         subset_match_idx[3] <= {s_idx[4:0] + 5'd24, w_idx[5:0]};
                                     end
                                 end

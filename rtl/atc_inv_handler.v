@@ -19,8 +19,8 @@ module atc_inv_handler (
     input  [19:0]                   inv_req_pasid,
     input  [15:0]                   inv_req_func_id,
     input  [63:0]                   inv_req_va,
-    output                          inv_req_ready,
-    output                          inv_ack_valid,
+    output reg                      inv_req_ready,
+    output reg                      inv_ack_valid,
 
     // ATS enable toggle
     input  [65:0]                   ats_toggle_req,
@@ -28,33 +28,33 @@ module atc_inv_handler (
     // FLR
     input                           flr_req,
     input  [15:0]                   flr_func_id,
-    output                          flr_done,
+    output reg                      flr_done,
 
     // ---- Entry Array Interface (batch clear + individual invalidation) ----
-    output                          ea_batch_clr_en,
-    output [15:0]                   ea_batch_clr_func_id,
-    output                          ea_batch_clr_all,
+    output reg                      ea_batch_clr_en,
+    output reg [15:0]               ea_batch_clr_func_id,
+    output reg                      ea_batch_clr_all,
 
     // Individual invalidation
-    output                          ea_inv_en,
-    output [4:0]                    ea_inv_set_idx,
-    output [5:0]                    ea_inv_way_idx,
+    output reg                      ea_inv_en,
+    output reg [4:0]                ea_inv_set_idx,
+    output reg [5:0]                ea_inv_way_idx,
 
     // ---- Comparison port for regular invalidation ----
-    output                          ea_cmp_inv_mode,
-    output                          ea_cmp_en,
-    output [4:0]                    ea_cmp_set_idx,
-    output                          ea_cmp_pv,
-    output [19:0]                   ea_cmp_pasid,
-    output [15:0]                   ea_cmp_func_id,
-    output [16:0][63:0]             ea_cmp_addr,
+    output reg                      ea_cmp_inv_mode,
+    output reg                      ea_cmp_en,
+    output reg [4:0]                ea_cmp_set_idx,
+    output reg                      ea_cmp_pv,
+    output reg [19:0]               ea_cmp_pasid,
+    output reg [15:0]               ea_cmp_func_id,
+    output reg [16:0][63:0]         ea_cmp_addr,
 
     input  [16:0][63:0]             ea_hit_vectors,
     input  [5:0]                    ea_hit_way_idx,
     input                           ea_any_hit,
 
     // ---- Busy / status ----
-    output                          inv_busy,
+    output reg                      inv_busy,
 
     // ---- Partition config ----
     input  [2:0]                    cfg_num_users

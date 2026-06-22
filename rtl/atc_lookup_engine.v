@@ -17,15 +17,15 @@ module atc_lookup_engine (
     input  [19:0]                   lu_req_pasid,
     input  [15:0]                   lu_req_func_id,
     input  [63:0]                   lu_req_va,
-    output                          lu_req_ready,
+    output reg                      lu_req_ready,
 
     // ---- Lookup Response Output ----
-    output                          lu_rsp_valid,
-    output                          lu_rsp_hit,
-    output [63:0]                   lu_rsp_translated_addr,
-    output [3:0]                    lu_rsp_perm,
-    output                          lu_rsp_hit_pv,
-    output                          lu_rsp_pre_hit,
+    output reg                      lu_rsp_valid,
+    output reg                      lu_rsp_hit,
+    output reg [63:0]               lu_rsp_translated_addr,
+    output reg [3:0]                lu_rsp_perm,
+    output reg                      lu_rsp_hit_pv,
+    output reg                      lu_rsp_pre_hit,
 
     // ---- Entry Array Interface (TAG comparison) ----
     output [4:0]                    ea_set_idx,
