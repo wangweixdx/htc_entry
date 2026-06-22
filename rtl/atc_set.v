@@ -117,10 +117,12 @@ module atc_set (
     // Hit Vector Assembly & Encoder (17-vector: current + 16 prefetch)
     //=========================================================================
     genvar aidx, widx;
+    wire [1087:0] hit_vectors_flat;
     generate
         for (aidx = 0; aidx < 17; aidx = aidx + 1) begin : gen_hit_v
             for (widx = 0; widx < 64; widx = widx + 1) begin : gen_hit_w
                 assign hit_vectors[aidx][widx] = entry_hit[widx][aidx];
+                assign hit_vectors_flat[aidx*64 + widx] = hit_vectors[aidx][widx];
             end
         end
     endgenerate
@@ -134,7 +136,7 @@ module atc_set (
         for (a = 0; a < 17; a = a + 1) begin
             if (!enc_any_hit) begin
                 for (k = 0; k < 64; k = k + 1) begin
-                    if (!enc_any_hit && hit_vectors[a][k]) begin
+                    if (!enc_any_hit && hit_vectors_flat[a*64 + k]) begin
                         enc_any_hit = 1'b1;
                         enc_hit_way = k[5:0];
                     end

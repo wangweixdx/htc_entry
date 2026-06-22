@@ -77,14 +77,14 @@ module atc_ctrl (
     //=========================================================================
     // Entry Array: TAG Compare Interface
     //=========================================================================
-    output [4:0]                    ea_set_idx,
-    output                          ea_set_en,
-    output                          ea_cmp_en,
-    output                          ea_cmp_inv_mode,
-    output                          ea_cmp_pv,
-    output [19:0]                   ea_cmp_pasid,
-    output [15:0]                   ea_cmp_func_id,
-    output [16:0][63:0]             ea_cmp_addr,
+    output reg [4:0]                ea_set_idx,
+    output reg                      ea_set_en,
+    output reg                      ea_cmp_en,
+    output reg                      ea_cmp_inv_mode,
+    output reg                      ea_cmp_pv,
+    output reg [19:0]               ea_cmp_pasid,
+    output reg [15:0]               ea_cmp_func_id,
+    output reg [16:0][63:0]         ea_cmp_addr,
 
     input  [16:0][63:0]             ea_hit_vectors,
     input  [5:0]                    ea_hit_way_idx,
@@ -150,7 +150,7 @@ module atc_ctrl (
     //=========================================================================
     // NRU Decay
     //=========================================================================
-    output                          ea_nru_decay_tick,
+    output reg                      ea_nru_decay_tick,
 
     //=========================================================================
     // Partition Config

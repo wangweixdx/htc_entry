@@ -151,6 +151,8 @@
 //=========================================================================
 
 // clog2 function (required by Verilog-2001 for constant expressions)
+`ifndef ATC_154_GUARD
+`define ATC_154_GUARD
 function integer clog2;
     input integer value;
     integer tmp;
@@ -160,8 +162,11 @@ function integer clog2;
             tmp = tmp >> 1;
     end
 endfunction
+`endif
 
 // STU mask: bits below STU are masked to 0
+`ifndef ATC_165_GUARD
+`define ATC_165_GUARD
 function [63:0] apply_stu_mask;
     input [63:0] addr;
     input [4:0]  stu;
@@ -171,8 +176,11 @@ function [63:0] apply_stu_mask;
         apply_stu_mask = addr & mask;
     end
 endfunction
+`endif
 
 // Partition: convert encoding to number of users
+`ifndef ATC_176_GUARD
+`define ATC_176_GUARD
 function integer num_users_from_part;
     input [2:0] part;
     begin
@@ -189,8 +197,11 @@ function integer num_users_from_part;
         endcase
     end
 endfunction
+`endif
 
 // Partition: sets per user
+`ifndef ATC_194_GUARD
+`define ATC_194_GUARD
 function integer get_sets_per_user;
     input [2:0] part;
     integer n;
@@ -199,8 +210,11 @@ function integer get_sets_per_user;
         get_sets_per_user = (n <= 32) ? `N_SETS / n : `N_SETS;
     end
 endfunction
+`endif
 
 // Partition: ways per user
+`ifndef ATC_204_GUARD
+`define ATC_204_GUARD
 function integer get_ways_per_user;
     input [2:0] part;
     integer n, users_per_set;
@@ -210,8 +224,11 @@ function integer get_ways_per_user;
         get_ways_per_user = (n > 32) ? `N_WAYS / users_per_set : `N_WAYS;
     end
 endfunction
+`endif
 
 // Partition: base set index for user k
+`ifndef ATC_215_GUARD
+`define ATC_215_GUARD
 function [4:0] get_user_set_base;
     input [2:0] part;
     input integer user_id;
@@ -222,8 +239,11 @@ function [4:0] get_user_set_base;
         get_user_set_base = user_id * sets_per;
     end
 endfunction
+`endif
 
 // Partition: base way index for user k
+`ifndef ATC_227_GUARD
+`define ATC_227_GUARD
 function [5:0] get_user_way_base;
     input [2:0] part;
     input integer user_id;
@@ -234,8 +254,11 @@ function [5:0] get_user_way_base;
         get_user_way_base = (n > 32) ? (user_id % users_per_set) * get_ways_per_user(part) : 0;
     end
 endfunction
+`endif
 
 // Partition: way limit for user k
+`ifndef ATC_239_GUARD
+`define ATC_239_GUARD
 function [6:0] get_user_way_limit;
     input [2:0] part;
     input integer user_id;
@@ -250,8 +273,11 @@ function [6:0] get_user_way_limit;
         end
     end
 endfunction
+`endif
 
 // Partition: set limit for user k
+`ifndef ATC_255_GUARD
+`define ATC_255_GUARD
 function [4:0] get_user_set_limit;
     input [2:0] part;
     input integer user_id;
@@ -261,8 +287,11 @@ function [4:0] get_user_set_limit;
         get_user_set_limit = (user_id + 1) * sets_per;
     end
 endfunction
+`endif
 
 // Partition-aware hash
+`ifndef ATC_266_GUARD
+`define ATC_266_GUARD
 function [4:0] partition_hash;
     input [2:0] part;
     input integer user_id;
@@ -282,8 +311,11 @@ function [4:0] partition_hash;
         end
     end
 endfunction
+`endif
 
 // Pack entry fields into flat vector
+`ifndef ATC_287_GUARD
+`define ATC_287_GUARD
 function [176:0] pack_entry;
     input             valid;
     input             pv;
@@ -298,3 +330,4 @@ function [176:0] pack_entry;
         pack_entry = {valid, pv, pasid, func_id, va, stu, pa, perm, nru};
     end
 endfunction
+`endif
