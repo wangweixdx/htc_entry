@@ -50,6 +50,7 @@ module atc_ctrl (
     input  [4:0]                    ats_comp_stu,
     input  [3:0]                    ats_comp_perm,
     output                          ats_comp_ready,
+    output                          ats_comp_update_done,
 
     // ---- ATS Invalidation ----
     input                           ats_inv_req_valid,
@@ -65,8 +66,9 @@ module atc_ctrl (
     // ---- FLR Done ----
     output                          flr_done,
 
-    // ---- Prefetch Response Valid ----
+    // ---- Prefetch Response ----
     output [15:0]                   prefetch_rsp_valid,
+    output [15:0]                   prefetch_hit,
 
     // ---- CSR / Config Signals ----
     input  [65:0]                   ats_enable,
@@ -261,6 +263,8 @@ module atc_ctrl (
     wire [3:0]         lu_engine_rsp_perm;
     wire               lu_engine_rsp_hit_pv;
     wire               lu_engine_rsp_pre_hit;
+    wire               lu_engine_rsp_exact_hit;
+    wire [15:0]        lu_engine_rsp_prefetch_hit;
     wire [4:0]         lu_ea_set_idx;
     wire               lu_ea_set_en;
     wire               lu_ea_cmp_en;
@@ -300,6 +304,8 @@ module atc_ctrl (
         .lu_rsp_perm        (lu_engine_rsp_perm),
         .lu_rsp_hit_pv      (lu_engine_rsp_hit_pv),
         .lu_rsp_pre_hit     (lu_engine_rsp_pre_hit),
+        .lu_rsp_exact_hit   (lu_engine_rsp_exact_hit),
+        .lu_rsp_prefetch_hit(lu_engine_rsp_prefetch_hit),
         .ea_set_idx         (lu_ea_set_idx),
         .ea_set_en          (lu_ea_set_en),
         .ea_cmp_en          (lu_ea_cmp_en),
@@ -458,6 +464,8 @@ module atc_ctrl (
 
     assign do_insert_write = dc_rsp_valid && insert_pending;
 
+    assign ats_comp_update_done = do_insert_write;
+
     // TAG write port
     assign ea_wr_en       = do_insert_write;
     assign ea_wr_set_idx  = insert_set_idx;
@@ -560,7 +568,7 @@ module atc_ctrl (
 
     assign dma_lu_rsp_valid  = lu_engine_rsp_valid && rsp_is_lookup[2];
     always @(*) begin
-        dma_lu_rsp_hit_r     = lu_engine_rsp_hit;
+        dma_lu_rsp_hit_r     = lu_engine_rsp_exact_hit;
         dma_lu_rsp_pre_hit_r = lu_engine_rsp_pre_hit;
         if (!ats_enable[arb_lu_func_id[5:0]]) begin
             dma_lu_rsp_hit_r     = 1'b0;
@@ -575,7 +583,7 @@ module atc_ctrl (
 
     // Relook response
     assign dma_rl_rsp_valid  = lu_engine_rsp_valid && !rsp_is_lookup[2];
-    assign dma_rl_rsp_hit    = lu_engine_rsp_hit;
+    assign dma_rl_rsp_hit    = lu_engine_rsp_exact_hit;
     assign dma_rl_rsp_translated_addr = lu_engine_rsp_pa;
     assign dma_rl_rsp_perm   = lu_engine_rsp_perm;
 
@@ -586,7 +594,8 @@ module atc_ctrl (
 
     // FLR done / Prefetch valid / Inv ack
     assign flr_done            = invh_flr_done;
-    assign prefetch_rsp_valid  = {16{lu_engine_rsp_valid}};
+    assign prefetch_rsp_valid  = lu_engine_rsp_prefetch_hit & {16{lu_engine_rsp_valid}};
+    assign prefetch_hit        = lu_engine_rsp_prefetch_hit;
     assign ats_inv_ack_valid   = invh_inv_ack;
 
 endmodule

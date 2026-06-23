@@ -67,6 +67,7 @@ module atc_top (
     output                          ats_inv_req_ready,
     output                          ats_inv_ack_valid,
     output                          ats_comp_ready,
+    output                          ats_comp_update_done,
 
     //=========================================================================
     // CSR / Configuration Interface
@@ -237,8 +238,10 @@ module atc_top (
         .ats_comp_stu       (ats_comp_stu),
         .ats_comp_perm      (ats_comp_perm),
         .ats_comp_ready     (ats_comp_ready),
+        .ats_comp_update_done(ats_comp_update_done),
         .flr_done           (csr_flr_req_done),
         .prefetch_rsp_valid (prefetch_rsp_valid),
+        .prefetch_hit       (prefetch_hit),
         .ats_enable         (ats_enable_sync),
         .ats_enable_toggle  (ats_enable_toggle),
         .flr_req            (flr_req_sync),
@@ -385,7 +388,6 @@ module atc_top (
     //=========================================================================
     // Prefetch outputs (from lookup engine via atc_ctrl)
     //=========================================================================
-    assign prefetch_hit  = 16'd0;
     assign prefetch_pa   = {16{64'd0}};
     assign prefetch_perm = {16{4'd0}};
 

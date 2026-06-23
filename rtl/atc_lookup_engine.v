@@ -26,6 +26,8 @@ module atc_lookup_engine (
     output reg [3:0]                lu_rsp_perm,
     output reg                      lu_rsp_hit_pv,
     output reg                      lu_rsp_pre_hit,
+    output reg                      lu_rsp_exact_hit,
+    output reg [15:0]               lu_rsp_prefetch_hit,
 
     // ---- Entry Array Interface (TAG comparison) ----
     output [4:0]                    ea_set_idx,
@@ -85,6 +87,7 @@ module atc_lookup_engine (
     reg          s1_captured_pv;
     reg [5:0]    s1_captured_way;
     reg          s1_captured_hit;
+    reg [15:0]   s1_captured_prefetch_hit;
     reg          s1_captured_pre_hit;
     reg          s1_valid;
     reg [4:0]    s1_set_idx_r;
@@ -94,6 +97,8 @@ module atc_lookup_engine (
     //=========================================================================
     reg         s2_valid;
     reg         s2_hit;
+    reg         s2_exact_hit;
+    reg [15:0]  s2_prefetch_hit;
     reg         s2_pre_hit;
     reg [63:0]  s2_translated_addr;
     reg [3:0]   s2_perm;
@@ -155,6 +160,8 @@ module atc_lookup_engine (
     assign lu_rsp_perm           = s2_perm;
     assign lu_rsp_hit_pv         = s2_hit_pv;
     assign lu_rsp_pre_hit        = s2_pre_hit;
+    assign lu_rsp_exact_hit      = s2_exact_hit;
+    assign lu_rsp_prefetch_hit   = s2_prefetch_hit;
 
     //=========================================================================
     // NRU Update on Hit
@@ -181,12 +188,15 @@ module atc_lookup_engine (
             s1_captured_pv      <= 1'b0;
             s1_captured_way     <= 6'd0;
             s1_captured_hit     <= 1'b0;
+            s1_captured_prefetch_hit <= 16'd0;
             s1_captured_pre_hit <= 1'b0;
             s1_valid            <= 1'b0;
             s1_set_idx_r        <= 5'd0;
             // S2
             s2_valid            <= 1'b0;
             s2_hit              <= 1'b0;
+            s2_exact_hit        <= 1'b0;
+            s2_prefetch_hit     <= 16'd0;
             s2_pre_hit          <= 1'b0;
             s2_translated_addr  <= 64'd0;
             s2_perm             <= 4'd0;
@@ -213,11 +223,19 @@ module atc_lookup_engine (
             s1_captured_pre_hit <= |ea_hit_vectors[16] && !(|ea_hit_vectors[0]);
             s1_valid            <= s0_valid;
             s1_set_idx_r        <= s0_set_idx_r;
+            // Prefetch hit: ea_hit_vectors[pf+1] → s1_captured_prefetch_hit[pf]
+            begin
+                integer pf;
+                for (pf = 0; pf < 16; pf = pf + 1)
+                    s1_captured_prefetch_hit[pf] <= |ea_hit_vectors[pf+1];
+            end
 
             // S2: result collection
             s2_valid <= s1_valid;
             if (s1_valid) begin
                 s2_hit             <= s1_captured_hit || s1_captured_pre_hit;
+                s2_exact_hit       <= s1_captured_hit;
+                s2_prefetch_hit    <= s1_captured_prefetch_hit;
                 s2_pre_hit         <= s1_captured_pre_hit;
                 s2_translated_addr <= s1_captured_pa;
                 s2_perm            <= s1_captured_perm;
