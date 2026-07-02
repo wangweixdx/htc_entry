@@ -1,0 +1,1044 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATC (Address Translation Cache) 模块设计文档 v2.4</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent-blue: #58a6ff;
+    --accent-green: #3fb950;
+    --accent-orange: #d29922;
+    --accent-red: #f85149;
+    --accent-purple: #bc8cff;
+    --border: #30363d;
+    --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Noto Sans SC', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg-primary); color: var(--text-primary);
+    font-family: var(--font-sans); line-height: 1.7;
+    padding: 40px 20px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.8em; font-weight:700; color:var(--accent-blue); border-bottom:2px solid var(--border); padding-bottom:12px; margin-bottom:24px; }
+  h2 { font-size: 1.35em; font-weight:600; color:var(--accent-green); margin-top:40px; margin-bottom:14px; padding-left:10px; border-left:3px solid var(--accent-green); }
+  h3 { font-size: 1.1em; font-weight:600; color:var(--accent-orange); margin-top:28px; margin-bottom:10px; }
+  h4 { font-size: 1em; font-weight:600; color:var(--accent-purple); margin-top:20px; margin-bottom:8px; }
+  p { margin-bottom:12px; color:var(--text-primary); }
+  pre {
+    background: var(--bg-tertiary); border:1px solid var(--border); border-radius:8px;
+    padding: 16px 20px; overflow-x:auto; font-family:var(--font-mono); font-size:0.85em; line-height:1.5; margin:12px 0;
+  }
+  pre.ascii { color: var(--accent-blue); }
+  code { font-family:var(--font-mono); background:var(--bg-tertiary); padding:2px 6px; border-radius:4px; font-size:0.9em; color:var(--accent-purple); }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:0.9em; }
+  th { background:var(--bg-tertiary); color:var(--accent-blue); font-weight:600; text-align:left; padding:10px 12px; border:1px solid var(--border); }
+  td { padding:9px 12px; border:1px solid var(--border); color:var(--text-primary); }
+  tr:nth-child(even) { background:rgba(255,255,255,0.02); }
+  tr:hover { background:rgba(88,166,255,0.05); }
+  .card { background:var(--bg-secondary); border:1px solid var(--border); border-radius:10px; padding:20px 24px; margin:16px 0; }
+  .card-title { font-weight:600; color:var(--accent-blue); margin-bottom:8px; font-size:1.05em; }
+  .card-note { background:rgba(210,153,34,0.08); border:1px solid var(--accent-orange); border-radius:10px; padding:16px 20px; margin:16px 0; }
+  .card-note .card-title { color:var(--accent-orange); }
+  .card-timing { background:rgba(248,81,73,0.08); border:1px solid var(--accent-red); border-radius:10px; padding:16px 20px; margin:16px 0; }
+  .card-timing .card-title { color:var(--accent-red); }
+  hr { border:none; border-top:1px solid var(--border); margin:32px 0; }
+  .tag { color:var(--text-secondary); font-size:0.85em; }
+  .signal-table td:nth-child(1) { font-family:var(--font-mono); color:var(--accent-purple); }
+  .signal-table td:nth-child(2) { text-align:center; font-weight:600; }
+  .signal-table td:nth-child(3) { text-align:center; }
+  .io-in { color: var(--accent-green); }
+  .io-out { color: var(--accent-blue); }
+  ul, ol { margin-left:20px; margin-bottom:12px; color:var(--text-primary); }
+  li { margin-bottom:4px; }
+  .resolved { color: var(--accent-green); font-weight: 600; }
+  .highlight { background: rgba(88,166,255,0.1); border-left: 3px solid var(--accent-blue); padding: 4px 12px; margin: 8px 0; }
+  .changed { background: rgba(63,185,80,0.06); border-left: 3px solid var(--accent-green); padding: 4px 12px; margin: 8px 0; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ATC (Address Translation Cache) 模块设计文档</h1>
+<p class="tag">EP 侧 · PCIe Gen6 · 2048 Entry · 64-way Set-Associative · SRIOV · PV=1 PASID=20 · 17-addr Prefetch · SF4X @1GHz · v2.4</p>
+
+<!-- ============================================================ -->
+<!-- 1. 模块概述 -->
+<!-- ============================================================ -->
+<h2>1. 模块概述</h2>
+
+<div class="card">
+  <div class="card-title">项目定位</div>
+  <p>本模块是 <strong>Endpoint (EP) 侧</strong> 的 ATC (Address Translation Cache) 控制器，部署于 PCIe Endpoint 设备中。它缓存来自 Root Complex (RC) 中 Translation Agent (TA) 的地址转换结果，为 EP 内部 DMA 引擎提供高速地址翻译查询服务。</p>
+</div>
+
+<div class="card">
+  <div class="card-title">模块清单</div>
+  <table>
+    <thead><tr><th>模块名</th><th>功能</th><th>说明</th></tr></thead>
+    <tbody>
+      <tr><td><code>atc_pkg</code></td><td>全局参数、类型、枚举定义</td><td>所有子模块共享的参数包</td></tr>
+      <tr><td class="changed"><code>atc_ctrl</code></td><td class="changed">ATC 控制器顶层</td><td class="changed">请求仲裁、分发、NRU 替换、外部接口管理 (新增完整框架)</td></tr>
+      <tr><td><code>atc_entry</code></td><td>单 entry 存储 + tag 比较 + 命中判断</td><td>核心存储单元，每个 entry 为 1 way</td></tr>
+      <tr><td><code>atc_set</code></td><td>64-way 组 + entry 阵列 + NRU 位管理</td><td>32 个 set 实例，每 set 包含 64 way</td></tr>
+      <tr><td><code>atc_dupcheck</code></td><td>地址重复检测（全遍历）</td><td>insert 前检查地址是否已缓存</td></tr>
+      <tr><td><code>atc_inv_handler</code></td><td>失效处理逻辑</td><td>常规失效 + ATS toggle + FLR 批量失效</td></tr>
+      <tr><td><code>atc_lookup_engine</code></td><td>查表引擎（含 17-地址预取）</td><td>hash → set select → 64-way×17-addr 并行比较 → hit 编码 → 4-stage pipeline</td></tr>
+      <tr><td><code>atc_top</code></td><td>顶层集成</td><td>连接所有子模块，对外暴露统一接口，支持用户分区</td></tr>
+      <tr><td class="resolved"><code>atc_nru_replacer</code></td><td class="resolved">NRU 替换策略</td><td class="resolved">分区感知 victim 搜索 (v0.3)</td></tr>
+      <tr><td class="resolved"><code>atc_csr_if</code></td><td class="resolved">CSR 接口适配</td><td class="resolved">ats_enable 边沿检测 + FLR 同步 + 分区配置 pass-through (v0.3)</td></tr>
+      <tr><td class="resolved"><code>atc_req_arbiter</code></td><td class="resolved">请求仲裁</td><td class="resolved">优先级: FLR > ATS Toggle > Inv > Insert > Lookup</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="card-title">核心功能</div>
+  <ol>
+    <li><strong>地址转换缓存：</strong>接收来自 RC 的 translation completion，将 {PV, PASID, Function ID, 未转换地址 → 已转换地址} 映射存入 entry</li>
+    <li><strong>并行查表：</strong>对 DMA 引擎发来的 lookup 请求进行 hash → set 选择 → way 并行比较 → 命中判断，返回 hit/miss + 翻译结果</li>
+    <li><strong>17-地址并行比较：</strong>每次 lookup 并发生成 17 个地址 (当前 + 4KB~64KB 共16个预取偏移)，64 way × 17 addr = 1088 路并行比较，提前发现连续地址命中</li>
+    <li><strong>地址重复检测：</strong>新地址写入前遍历检查是否已存在，避免重复分配 entry</li>
+    <li><strong>地址失效处理：</strong>响应 RC 发来的 ATS Invalidation Request，清除匹配的 entry</li>
+    <li><strong>17-地址预取 (v2.0)：</strong>每次 lookup 并行比较 17 个地址（当前 + 4KB~64KB 共16个预取），per-function 使能</li>
+    <li><strong>Flow-control Ready 信号 (v2.2 / v2.3 增强)：</strong>dma_lu_req_ready/dma_rl_req_ready/ats_inv_req_ready/ats_comp_ready，优先级门控 — 高优先级请求活跃时低优先级 ready 自动 deassert</li>
+    <li><strong>FLR Done 信号 (v2.2)：</strong>csr_flr_req_done 输出，FLR 操作完成指示</li>
+    <li><strong>Prefetch Valid 信号 (v2.2)：</strong>prefetch_rsp_valid[15:0] 输出，指示预取结果有效性</li>
+    <li><strong>Relook 接口 (v2.1)：</strong>DMA 第二次查找接口，仅返回当前地址命中结果（不含预取），优先级介于 Insert 和 Lookup 之间</li>
+    <li><strong>Per-function ATS Enable (v2.0)：</strong>每个 Function 独立 1-bit ats_enable，64-bit 向量输入</li>
+    <li><strong>特殊场景失效：</strong>ATS enable 切换、FLR (Function Level Reset) 时批量清除对应 Function 的全部 entry</li>
+  </ol>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2. 系统架构 -->
+<!-- ============================================================ -->
+<h2>2. 系统架构</h2>
+
+<h3>2.1 顶层架构图</h3>
+
+<pre class="ascii">
+┌──────────────────────────────────────────────────────────────────────────┐
+│                              atc_top                                      │
+│                                                                           │
+│  ┌──────────────────────────────────────────────────────────────────┐    │
+│  │                         atc_ctrl                                   │    │
+│  │                                                                   │    │
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │    │
+│  │  │  atc_lookup   │  │ atc_dupcheck │  │  atc_inv_handler     │   │    │
+│  │  │  _engine      │  │              │  │                      │   │    │
+│  │  │              │  │              │  │  ┌────────────────┐  │   │    │
+│  │  │ ┌──────────┐ │  │ ┌──────────┐ │  │  │ Regular Inv    │  │   │    │
+│  │  │ │ Hash +   │ │  │ │ Full     │ │  │  │ (inv_mask)     │  │   │    │
+│  │  │ │ Set Sel  │ │  │ │ traversal│ │  │  ├────────────────┤  │   │    │
+│  │  │ ├──────────┤ │  │ │ compare  │ │  │  │ ATS Toggle Inv │  │   │    │
+│  │  │ │ 64K Pre- │ │  │ └──────────┘ │  │  ├────────────────┤  │   │    │
+│  │  │ │ lookup   │ │  │              │  │  │ FLR Inv        │  │   │    │
+│  │  │ └──────────┘ │  │              │  │  └────────────────┘  │   │    │
+│  │  └──────────────┘  └──────────────┘  └──────────────────────┘   │    │
+│  │                                                                   │    │
+│  │  ┌──────────────────────────────────────────────────────────┐    │    │
+│  │  │               Request Arbiter + NRU Replacer              │    │    │
+│  │  └──────────────────────────────────────────────────────────┘    │    │
+│  └──────────────────────────────────────────────────────────────────┘    │
+│                                    │                                      │
+│                                    ▼                                      │
+│  ┌──────────────────────────────────────────────────────────────────┐    │
+│  │                    atc_entry_array (2048 entries)                  │    │
+│  │                                                                   │    │
+│  │  ┌──────────────┐  ┌──────────────┐       ┌──────────────┐      │    │
+│  │  │   Set #0     │  │   Set #1     │  ...  │   Set #31    │      │    │
+│  │  │  (64-way)    │  │  (64-way)    │       │  (64-way)    │      │    │
+│  │  │              │  │              │       │              │      │    │
+│  │  │ Way0..Way63  │  │ Way0..Way63  │       │ Way0..Way63  │      │    │
+│  │  └──────────────┘  └──────────────┘       └──────────────┘      │    │
+│  └──────────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<h3>2.2 EP 侧 ATC 数据流</h3>
+
+<pre class="ascii">
+                        PCIe Link
+             ┌─────────────────────────────┐
+             │                             │
+             ▼                             ▼
+    ┌────────────────┐          ┌────────────────────┐
+    │  ATS Completion │          │  ATS Invalidation   │
+    │  (from RC TA)   │          │  Request (from RC)  │
+    └───────┬────────┘          └─────────┬──────────┘
+            │                             │
+            │  {PV, PASID,               │  {inv_mask,
+            │   FuncID,                   │   PV, PASID,
+            │   untranslated_addr,        │   FuncID,
+            │   translated_addr,          │   untranslated_addr}
+            │   STU, Perm}                │
+            ▼                             ▼
+    ┌──────────────────────────────────────────┐
+    │              atc_ctrl                     │
+    │                                           │
+    │  Insert path ──► dupcheck ──► entry write │
+    │  Inv path    ──► inv_handler ──► clear    │
+    └──────────────────────────────────────────┘
+            ▲
+            │  {PV, PASID, FuncID,
+            │   untranslated_addr}
+            │
+    ┌───────┴────────┐
+    │  DMA Engine     │
+    │  Lookup Request │
+    └────────────────┘
+</pre>
+
+<!-- ============================================================ -->
+<!-- 3. 接口信号定义 -->
+<!-- ============================================================ -->
+<h2>3. 接口信号定义</h2>
+
+<h3>3.1 时钟与复位</h3>
+<table class="signal-table">
+  <thead><tr><th>信号名</th><th>I/O</th><th>位宽</th><th>时钟域</th><th>功能描述</th></tr></thead>
+  <tbody>
+    <tr><td>clk</td><td class="io-in">I</td><td>1</td><td>-</td><td>主工作时钟，目标频率 1GHz (SF4X)</td></tr>
+    <tr><td>rst_n</td><td class="io-in">I</td><td>1</td><td>clk</td><td>异步复位，低有效，内部同步释放</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 配置与状态信号 (从 CSR/Config Space) <span class="resolved">【新增】</span></h3>
+<table class="signal-table">
+  <thead><tr><th>信号名</th><th>I/O</th><th>位宽</th><th>时钟域</th><th>功能描述</th></tr></thead>
+  <tbody>
+    <tr><td>ats_enable</td><td class="io-in">I</td><td>64</td><td>clk</td><td>ATS Capability Enable 位，来自 PCIe ATS Extended Capability 寄存器。1=ATS 使能</td></tr>
+    <tr><td>ats_enable_toggle</td><td class="io-in">I</td><td>1</td><td>clk</td><td>ATS enable 边沿检测信号 (0→1 或 1→0)。由上层模块打拍检测生成，脉宽 1 cycle</td></tr>
+    <tr><td>flr_req</td><td class="io-in">I</td><td>1</td><td>clk</td><td>Function Level Reset 请求。高有效，来自 PCIe FLR 控制逻辑。触发时清除对应 Function 的全部 entry</td></tr>
+    <tr><td>csr_num_users</td><td class="io-in">I</td><td>3</td><td>clk</td><td>用户分区配置 (v0.3 新增)。编码: 0=1用户, 1=2, 2=4, 3=8, 4=16, 5=32, 6=64, 7=48。默认=0 (不分)</td></tr>
+    <tr><td>flr_func_id</td><td class="io-in">I</td><td>16</td><td>clk</td><td>FLR 目标 Function ID，与 flr_req 同时有效</td></tr>
+  </tbody>
+</table>
+
+<h3>3.3 来自 atc_ctrl 的 entry 控制信号 (c2e_* )</h3>
+<table class="signal-table">
+  <thead><tr><th>信号名</th><th>I/O</th><th>位宽</th><th>时钟域</th><th>功能描述</th></tr></thead>
+  <tbody>
+    <tr><td>c2e_payload</td><td class="io-in">I</td><td>可变</td><td>clk</td><td>来自 atc_ctrl 的 payload 总线，包含未转换地址、Function ID、PASID 等信息</td></tr>
+    <tr><td>c2e_update_entry</td><td class="io-in">I</td><td>1</td><td>clk</td><td>Entry 更新使能。有效时将 translation completion 中的 PV、PASID、device_function_ID、未转换地址、STU、translated_addr、perm 写入目标 entry</td></tr>
+    <tr><td>c2e_lu_function_ids</td><td class="io-in">I</td><td>16</td><td>clk</td><td>当前查表请求对应的 device/function 标识</td></tr>
+    <tr><td>c2e_lu_pasid</td><td class="io-in">I</td><td>16</td><td>clk</td><td>当前查表请求对应的 PASID</td></tr>
+    <tr><td>c2e_lu_pv</td><td class="io-in">I</td><td>16</td><td>clk</td><td>当前查表请求对应的 PV (Protection Vector)</td></tr>
+    <tr><td>c2e_lu_untranslated_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>当前需查表的未转换地址 (guest virtual address, 64b)</td></tr>
+    <tr><td>c2e_inv_mask</td><td class="io-in">I</td><td>16</td><td>clk</td><td>失效掩码，用于对不同 function 的 entry 进行选择性失效</td></tr>
+    <tr><td>c2e_inv_payload</td><td class="io-in">I</td><td>可变</td><td>clk</td><td>失效请求 payload，包含 {inv_PV, inv_PASID, inv_func_id, inv_addr}</td></tr>
+    <tr><td>c2e_addr_payload_dupchek_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>地址重复检测有效信号。有效时对 translation completion 中的地址进行重复判断</td></tr>
+    <tr><td>c2e_dupchek_payload</td><td class="io-in">I</td><td>可变</td><td>clk</td><td>重复检测 payload，包含 {PV, PASID, func_id, untranslated_addr, STU}</td></tr>
+  </tbody>
+</table>
+
+<h3>3.4 entry 返回给 atc_ctrl 的信号 (e2c_* )</h3>
+<table class="signal-table">
+  <thead><tr><th>信号名</th><th>I/O</th><th>位宽</th><th>时钟域</th><th>功能描述</th></tr></thead>
+  <tbody>
+    <tr><td>e2c_entry_valid</td><td class="io-out">O</td><td>1</td><td>clk</td><td>当前被访问 entry 的有效位状态</td></tr>
+    <tr><td>e2c_hit</td><td class="io-out">O</td><td>64</td><td>clk</td><td>查表命中向量 (17 组)。ea_hit_vectors[16:0][63:0]，每组 64b 对应一个比较地址在当前 set 的 64-way 命中情况</td></tr>
+    <tr><td>e2c_hit_pv</td><td class="io-out">O</td><td>16</td><td>clk</td><td>命中 entry 中保存的 PV 值</td></tr>
+    <tr><td>e2c_hit_translated_addr</td><td class="io-out">O</td><td>64</td><td>clk</td><td>命中 entry 中保存的已转换物理地址 (HPA)</td></tr>
+    <tr><td>e2c_hit_perm</td><td class="io-out">O</td><td>4</td><td>clk</td><td>命中 entry 的权限位</td></tr>
+    <tr><td>e2c_addr_duplicate</td><td class="io-out">O</td><td>1</td><td>clk</td><td>地址重复检测结果。1 = 该地址已存在于某个 entry 中</td></tr>
+    <tr><td>e2c_dup_entry_idx</td><td class="io-out">O</td><td>11</td><td>clk</td><td>重复地址所在的 entry 索引 (set_idx[4:0] + way_idx[5:0])</td></tr>
+    <tr><td>e2c_inv_valid</td><td class="io-out">O</td><td>1</td><td>clk</td><td>失效命中有效。1 = 当前 entry 被失效命中并已清除</td></tr>
+    <tr><td>e2c_inv_hit_idx</td><td class="io-out">O</td><td>11</td><td>clk</td><td>失效命中的 entry 索引，供 atc_ctrl 的 inv_post_check 使用</td></tr>
+    <tr><td>e2c_inv_done</td><td class="io-out">O</td><td>1</td><td>clk</td><td>失效操作完成。单 cycle pulse</td></tr>
+    <tr><td>e2c_cmp_hit_pv</td><td class="io-out">O</td><td>16</td><td>clk</td><td>比较命中后的 PV 值输出</td></tr>
+  </tbody>
+</table>
+
+<h3>3.5 atc_top 对外接口 (to/from DMA Engine &amp; ATS Layer) <span class="resolved">【v2.3 更新】</span></h3>
+<table class="signal-table">
+  <thead><tr><th>信号名</th><th>I/O</th><th>位宽</th><th>时钟域</th><th>功能描述</th></tr></thead>
+  <tbody>
+    <tr><td>dma_lu_req_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>DMA 引擎查表请求有效</td></tr>
+    <tr><td>dma_lu_req_pv</td><td class="io-in">I</td><td>1</td><td>clk</td><td>DMA 查表请求 PV</td></tr>
+    <tr><td>dma_lu_req_pasid</td><td class="io-in">I</td><td>20</td><td>clk</td><td>DMA 查表请求 PASID</td></tr>
+    <tr><td>dma_lu_req_func_id</td><td class="io-in">I</td><td>16</td><td>clk</td><td>DMA 查表请求 Function ID</td></tr>
+    <tr><td>dma_lu_req_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>DMA 查表请求未转换地址</td></tr>
+    <tr><td>dma_lu_req_ready</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Lookup 通道 ready。=1 当 !downstream_busy &amp;&amp; 无更高优先级请求 (FLR/ATS_Toggle/Inv/Insert/Relook)</td></tr>
+    <tr><td>dma_lu_rsp_valid</td><td class="io-out">O</td><td>1</td><td>clk</td><td>查表结果有效 (4-cycle 流水线延迟)</td></tr>
+    <tr><td>dma_lu_rsp_hit</td><td class="io-out">O</td><td>1</td><td>clk</td><td>查表命中 (仅当前地址精确命中，不含预取)</td></tr>
+    <tr><td>dma_lu_rsp_translated_addr</td><td class="io-out">O</td><td>64</td><td>clk</td><td>翻译后的物理地址</td></tr>
+    <tr><td>dma_lu_rsp_perm</td><td class="io-out">O</td><td>4</td><td>clk</td><td>访问权限</td></tr>
+    <tr><td>dma_lu_rsp_pre_hit</td><td class="io-out">O</td><td>1</td><td>clk</td><td>64KB 预查命中 (仅 addr+64KB 命中，当前地址未命中)</td></tr>
+    <tr><td>dma_lu_rsp_hit_pv</td><td class="io-out">O</td><td>1</td><td>clk</td><td>命中 entry 的 PV 值</td></tr>
+    <tr><td>prefetch_hit[15:0]</td><td class="io-out">O</td><td>16</td><td>clk</td><td>16 个预取偏移独立命中。bit[i]=1 表示 addr+(i+1)&times;4KB 命中 (共覆盖 +4KB~+64KB)</td></tr>
+    <tr><td>prefetch_rsp_valid[15:0]</td><td class="io-out">O</td><td>16</td><td>clk</td><td>预取响应有效。prefetch_hit[i] &amp; lu_rsp_valid，per-bit 门控</td></tr>
+    <tr><td>dma_rl_req_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>DMA Relook 请求有效 (第二次查找，仅当前地址)</td></tr>
+    <tr><td>dma_rl_req_pv</td><td class="io-in">I</td><td>1</td><td>clk</td><td>DMA Relook 请求 PV</td></tr>
+    <tr><td>dma_rl_req_pasid</td><td class="io-in">I</td><td>20</td><td>clk</td><td>DMA Relook 请求 PASID</td></tr>
+    <tr><td>dma_rl_req_func_id</td><td class="io-in">I</td><td>16</td><td>clk</td><td>DMA Relook 请求 Function ID</td></tr>
+    <tr><td>dma_rl_req_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>DMA Relook 请求未转换地址</td></tr>
+    <tr><td>dma_rl_req_ready</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Relook 通道 ready。=1 当 !downstream_busy &amp;&amp; 无 FLR/ATS_Toggle/Inv/Insert 请求</td></tr>
+    <tr><td>dma_rl_rsp_valid</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Relook 结果有效</td></tr>
+    <tr><td>dma_rl_rsp_hit</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Relook 命中 (仅当前地址精确命中，不含预取)</td></tr>
+    <tr><td>dma_rl_rsp_translated_addr</td><td class="io-out">O</td><td>64</td><td>clk</td><td>Relook 翻译后的物理地址</td></tr>
+    <tr><td>dma_rl_rsp_perm</td><td class="io-out">O</td><td>4</td><td>clk</td><td>Relook 访问权限</td></tr>
+    <tr><td>ats_comp_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>ATS Translation Completion 有效 (from RC)</td></tr>
+    <tr><td>ats_comp_pv</td><td class="io-in">I</td><td>1</td><td>clk</td><td>ATS Completion PV</td></tr>
+    <tr><td>ats_comp_pasid</td><td class="io-in">I</td><td>20</td><td>clk</td><td>ATS Completion PASID</td></tr>
+    <tr><td>ats_comp_func_id</td><td class="io-in">I</td><td>16</td><td>clk</td><td>ATS Completion Function ID</td></tr>
+    <tr><td>ats_comp_untranslated_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>ATS Completion 未转换地址</td></tr>
+    <tr><td>ats_comp_translated_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>ATS Completion 已转换地址</td></tr>
+    <tr><td>ats_comp_stu</td><td class="io-in">I</td><td>5</td><td>clk</td><td>ATS Completion STU</td></tr>
+    <tr><td>ats_comp_perm</td><td class="io-in">I</td><td>4</td><td>clk</td><td>ATS Completion 权限</td></tr>
+    <tr><td>ats_comp_ready</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Insert 通道 ready。=1 当 !downstream_busy &amp;&amp; 无 FLR/ATS_Toggle/Inv 请求</td></tr>
+    <tr><td>ats_comp_update_done</td><td class="io-out">O</td><td>1</td><td>clk</td><td><span class="resolved">【v2.3】</span> ATS Completion 写入完成脉冲。TAG+SRAM 均已更新，单 cycle pulse</td></tr>
+    <tr><td>ats_inv_req_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>ATS Invalidation Request 有效 (from RC)</td></tr>
+    <tr><td>ats_inv_mask</td><td class="io-in">I</td><td>16</td><td>clk</td><td>失效掩码，选择性失效不同 Function 的 entry</td></tr>
+    <tr><td>ats_inv_pv_valid</td><td class="io-in">I</td><td>1</td><td>clk</td><td>失效请求 PV 有效标志</td></tr>
+    <tr><td>ats_inv_pv</td><td class="io-in">I</td><td>1</td><td>clk</td><td>失效请求 PV</td></tr>
+    <tr><td>ats_inv_pasid</td><td class="io-in">I</td><td>20</td><td>clk</td><td>失效请求 PASID</td></tr>
+    <tr><td>ats_inv_func_id</td><td class="io-in">I</td><td>16</td><td>clk</td><td>失效请求 Function ID</td></tr>
+    <tr><td>ats_inv_untranslated_addr</td><td class="io-in">I</td><td>64</td><td>clk</td><td>失效请求未转换地址</td></tr>
+    <tr><td>ats_inv_req_ready</td><td class="io-out">O</td><td>1</td><td>clk</td><td>Invalidation 通道 ready。=1 当 !downstream_busy &amp;&amp; 无 FLR/ATS_Toggle 请求</td></tr>
+    <tr><td>ats_inv_ack_valid</td><td class="io-out">O</td><td>1</td><td>clk</td><td>失效完成确认</td></tr>
+    <tr><td>csr_flr_req_done</td><td class="io-out">O</td><td>1</td><td>clk</td><td>FLR 操作完成指示</td></tr>
+    <tr><td>csr_prefetch_enable</td><td class="io-in">I</td><td>66</td><td>clk</td><td>Per-function 预取使能位 (64 Function + 2 保留)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 4. atc_ctrl 顶层框架设计 (新增) -->
+<!-- ============================================================ -->
+<h2>4. atc_ctrl 顶层框架设计 <span class="resolved">【新增完整章节】</span></h2>
+
+<div class="card">
+  <div class="card-title">atc_ctrl 职责</div>
+  <p><code>atc_ctrl</code> 是 EP 侧 ATC 的控制中枢，位于 <code>atc_top</code> 内部，负责协调所有子模块的工作。它不直接存储 entry 数据，而是管理 entry 的访问、分配和失效。</p>
+</div>
+
+<h3>4.1 atc_ctrl 内部架构</h3>
+
+<pre class="ascii">
+┌─────────────────────────────────────────────────────────────────────────┐
+│                              atc_ctrl                                    │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     Request Demux & Arbitration                   │   │
+│  │                                                                  │   │
+│  │   request_sources:                                               │   │
+│  │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │   │
+│  │   │ DMA Lu   │  │ ATS Comp │  │ ATS Inv  │  │ FLR / ATS    │   │   │
+│  │   │ Request  │  │ (Insert) │  │ Request  │  │ Toggle       │   │   │
+│  │   └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────┬───────┘   │   │
+│  │        │             │             │               │            │   │
+│  │        ▼             ▼             ▼               ▼            │   │
+│  │   ┌────────────────────────────────────────────────────────┐   │   │
+│  │   │                 Priority Arbiter                        │   │   │
+│  │   │  Priority: FLR > ATS Toggle > Inv > Insert > Lookup    │   │   │
+│  │   └────────────────────────┬───────────────────────────────┘   │   │
+│  │                            │                                    │   │
+│  └────────────────────────────┼────────────────────────────────────┘   │
+│                               ▼                                         │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     Execution Pipeline (4-stage)                  │   │
+│  │                                                                  │   │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │   │
+│  │  │ Stage 0  │  │ Stage 1  │  │ Stage 2  │  │ Stage 3  │        │   │
+│  │  │ Dispatch │─►│ TAG Cmp  │─►│ SRAM Rd  │─►│ Result   │        │   │
+│  │  │ + Hash   │  │ + Hit Enc│  │ Data Ret │  │ + Output │        │   │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘        │   │
+│  │                                                                  │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                               │                                         │
+│  ┌────────────────────────────┼────────────────────────────────────┐   │
+│  │                     NRU Replacer                                 │   │
+│  │                                                                  │   │
+│  │  NRU State per set (64 way × 2b):                                │   │
+│  │  优先级: used=0,not_last=1  >  used=0,not_last=0                │   │
+│  │  全局 used=1 时全体清零，随机选择一个 way 设 not_last=0          │   │
+│  │  每 1024 cycle 对所有 way 执行 used←0 (定期衰减)                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     CSR Interface                                 │   │
+│  │  ats_enable, ats_enable_toggle, flr_req, flr_func_id             │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<h3>4.2 请求仲裁优先级</h3>
+<table>
+  <thead><tr><th>优先级</th><th>请求类型</th><th>来源</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>0 (最高)</td><td>FLR</td><td>PCIe FLR 控制</td><td>Function Level Reset，必须立即清除，阻塞其他所有请求</td></tr>
+    <tr><td>1</td><td>ATS Toggle</td><td>CSR / Config Space</td><td>ATS enable 边沿变化，批量清除对应 Function entry</td></tr>
+    <tr><td>2</td><td>Invalidation</td><td>RC (ATS Inv Request)</td><td>RC 要求失效特定 translation，需尽快响应 (ATS 规范有时延要求)</td></tr>
+    <tr><td>3</td><td>Insert</td><td>RC (ATS Completion)</td><td>新 translation 写入缓存</td></tr>
+    <tr><td>4 (最低)</td><td>Lookup</td><td>DMA Engine</td><td>DMA 地址翻译查询，频率最高但优先级最低</td></tr>
+  </tbody>
+</table>
+
+<h3>4.3 执行流水线 (4-stage @1GHz) <span class="resolved">【v2.3 更新】</span></h3>
+
+<table>
+  <thead><tr><th>Stage</th><th>操作</th><th>关键路径</th><th>预估延迟 (SF4X)</th></tr></thead>
+  <tbody>
+    <tr><td>S0: Dispatch</td><td>请求仲裁 → hash 计算 → set 索引解码 → 选中目标 set</td><td>hash XOR + partition_hash() + decoder (5-to-32)</td><td>~200ps</td></tr>
+    <tr><td>S1: TAG Compare</td><td>Tag 寄存器读取 → 64-way &times; 17-addr 并行比较 → hit 向量生成 → SRAM rd_en 发出</td><td>64b comparator &times; 64 way &times; 17 addr + hit encoder</td><td>~600ps</td></tr>
+    <tr><td>S2: SRAM Read</td><td>Sync SRAM 数据返回 (1-cycle 读延迟) → 数据寄存器捕获</td><td>SRAM read latency (1 cycle)</td><td>~200ps</td></tr>
+    <tr><td>S3: Result</td><td>响应组装 → 输出到 DMA / ATS 接口</td><td>Response mux + output reg</td><td>~150ps</td></tr>
+  </tbody>
+</table>
+
+<div class="highlight">
+  <p><strong>设计结论：</strong>4-stage 流水线，latency = 4 cycles (4ns @1GHz)，throughput = 1 lookup/cycle。SRAM 改为同步读 (rd_en 在 S1 发出，数据在 S2 返回)，S1 关键路径 (~600ps) 满足 1ns 周期约束。查找、重复检测、失效三条路径共用此流水线。</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- 5. 功能详细描述 -->
+<!-- ============================================================ -->
+<h2>5. 功能详细描述</h2>
+
+<h3>5.1 地址查找与命中判断</h3>
+
+<p><strong>查表信息包括：</strong>PV, PASID, device_function_ID, 当前未转换地址 (+64K 地址)</p>
+
+<pre>
+比较规则 (与原始设计一致，已确认)：
+┌─────────────────────────────────────────────────────────────────────┐
+│  IF  查表PV ≠ 表中PV → 未命中（MISS）                              │
+│                                                                     │
+│  ELIF 查表PV = 表中PV AND PV有效 →                                  │
+│       比较 PASID AND device_function_ID AND untranslated_addr      │
+│       全部通过 → 命中（HIT）；任一不通过 → 未命中（MISS）          │
+│                                                                     │
+│  ELSE (查表PV = 表中PV AND PV无效) →                               │
+│       比较 device_function_ID AND untranslated_addr                │
+│       通过 → 命中（HIT）；不通过 → 未命中（MISS）                  │
+└─────────────────────────────────────────────────────────────────────┘
+
+地址比较时：根据 STU 对查表地址和存储地址进行掩码处理后再比较。
+掩码生成：addr_masked = addr &amp; ~((1 &lt;&lt; (STU + 12)) - 1)
+// STU=0 → 4KB 对齐 (mask 低 12 bit)；STU=1 → 8KB 对齐 (mask 低 13 bit)
+// STU=N → 2^(N+12)-byte 对齐 (PCIe ATS 标准定义)
+</pre>
+
+<h3>5.2 17-地址并行比较 + 预取机制 (v2.0 / v2.3 更新)</h3>
+
+<pre>
+每次 lookup 生成 17 个比较地址 (当前 + 16 个预取偏移)：
+  ea_cmp_addr[0]  = lu_req_va + 64'h0000_0000_0000_0000   // 当前地址
+  ea_cmp_addr[1]  = lu_req_va + 64'h0000_0000_0000_1000   // +4KB
+  ea_cmp_addr[2]  = lu_req_va + 64'h0000_0000_0000_2000   // +8KB
+  ...
+  ea_cmp_addr[15] = lu_req_va + 64'h0000_0000_0000_F000   // +60KB
+  ea_cmp_addr[16] = lu_req_va + 64'h0000_0000_0001_0000   // +64KB (64K 预查)
+
+每个 way 配备 17 套地址比较器 (generate 循环)：
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Way[k] Tag ──┬── cmp(ea_cmp_addr[0],  entry_addr) ──► hit[0]  │
+  │               ├── cmp(ea_cmp_addr[1],  entry_addr) ──► hit[1]  │
+  │               ├── ...                                          │
+  │               ├── cmp(ea_cmp_addr[16], entry_addr) ──► hit[16] │
+  │               │                                                │
+  │  同时比较 PV, PASID, FuncID (共享一套比较器)                    │
+  └──────────────────────────────────────────────────────────────┘
+
+命中向量编码：
+  ea_hit_vectors[16:0][63:0] — 17 组 64-bit hit vectors
+  ea_hit_vectors[0]  对应当前地址命中 (exact hit)
+  ea_hit_vectors[16] 对应 64KB 预查命中 (pre_hit)
+  ea_hit_vectors[1:15] 对应 16 个预取偏移命中 (prefetch_hit[i])
+
+响应信号语义：
+  dma_lu_rsp_hit        = |ea_hit_vectors[0]  (仅当前地址精确命中)
+  dma_lu_rsp_pre_hit     = |ea_hit_vectors[16] &amp;&amp; !|ea_hit_vectors[0]  (仅 64KB，不含当前)
+  prefetch_hit[15:0]     = {|ea_hit_vectors[16], ..., |ea_hit_vectors[1]}  (16 偏移独立指示)
+  dma_rl_rsp_hit        = |ea_hit_vectors[0]  (Relook: 仅当前地址)
+
+参数化：PREFETCH_COUNT=17, LOOKAHEAD_OFFSET=64'h1_0000 (64KB)
+
+<h4>5.2.1 prefetch_enable 门控与 Hash 切换 <span class="resolved">【v2.4】</span></h4>
+当 <code>csr_prefetch_enable[func_id]==1</code> 时, 除输出门控外,
+查表和插入路径的 hash 算法也会切换:
+<pre>
+// prefetch_enable=0: hash by 4KB-aligned VA
+set_idx = partition_hash(func_id[5:0], func_id, va)
+        // partition_hash 内部: func_id[3:0] ^ va[15:12]
+
+// prefetch_enable=1: hash by 64KB-aligned VA
+hash_va = {va[63:20], va[19:16], va[19:16], va[11:0]}
+set_idx = partition_hash(func_id[5:0], func_id, hash_va)
+        // partition_hash 内部: func_id[3:0] ^ va[19:16]
+</pre>
+使用 64KB 对齐 hash 可保证当前地址和全部 16 个预取地址 (current+4KB ~ current+60KB)
+落入同一个 set, 使预取命中能被正确检测。<code>prefetch_enable=0</code> 时仍使用 4KB 对齐 hash。
+
+<p>prefetch 输出信号通过 <code>prefetch_enable</code> 门控:</p>
+<pre>
+prefetch_rsp_valid = lu_engine_rsp_prefetch_hit &amp; {16{lu_engine_rsp_valid &amp;&amp; rsp_prefetch_en}};
+prefetch_hit        = lu_engine_rsp_prefetch_hit &amp; {16{rsp_prefetch_en}};
+// dma_lu_rsp_pre_hit 同样被 prefetch_enable 门控
+</pre>
+</pre>
+
+<h3>5.3 地址重复检测 (Duplicate Check)</h3>
+
+<pre>
+触发条件：c2e_addr_payload_dupchek_valid = 1 (来自 atc_ctrl 的 insert 路径)
+
+流程 (遍历所有 32 sets × 64 ways = 2048 entries)：
+  1. 提取 translation completion 中的 {PV, PASID, device_function_ID, STU}
+  2. 对未转换地址按 STU 进行掩码处理
+  3. 遍历全部 entry，按命中规则进行匹配
+  4. 任一 entry 匹配 → e2c_addr_duplicate = 1, e2c_dup_entry_idx = 命中索引
+  5. 全部不匹配   → e2c_addr_duplicate = 0
+
+⚠ 1GHz 时序注意：
+  全遍历 2048 entry 比较在单周期不可行。采用 pipeline 分 4 拍完成，
+  每拍比较 8 个 set (512 entry)。dupcheck 总延迟 = 4 cycles。
+
+结果处理：
+  ┌─ 地址不重复 → atc_ctrl NRU 分配新 entry，c2e_update_entry 写入
+  └─ 地址重复   → atc_ctrl 通过 c2e_update_entry 覆盖该 entry (更新 STU/perm)
+</pre>
+
+<h3>5.4 Entry 更新 (Insert)</h3>
+<p>当 <code>c2e_update_entry</code> 有效时，将目标 entry 更新为以下内容。同时，
+<strong>NRU 状态更新为 ACTIVE ({1,1})</strong> <span class="resolved">【v2.4】</span>，
+防止同一 entry 在下次 NRU 选择时被再次选为 victim（避免连续 insert 覆盖同一 way）。</p>
+<table>
+  <thead><tr><th>字段</th><th>位宽</th><th>来源</th></tr></thead>
+  <tbody>
+    <tr><td>PV</td><td>1b</td><td>ATS Completion → PV 字段</td></tr>
+    <tr><td>PASID</td><td>20b</td><td>ATS Completion → PASID 字段</td></tr>
+    <tr><td>device_function_ID</td><td>16b</td><td>ATS Completion → Function ID (BDF)</td></tr>
+    <tr><td>untranslated_addr</td><td>64b</td><td>ATS Completion → 未转换地址 (掩码处理前原值)</td></tr>
+    <tr><td>STU</td><td>5b</td><td>ATS Completion → STU (编码: STU = log2(page_size))</td></tr>
+    <tr><td>translated_addr</td><td>64b</td><td>ATS Completion → 已转换 HPA</td></tr>
+    <tr><td>perm</td><td>4b</td><td>ATS Completion → {valid, read, write, exec}</td></tr>
+    <tr><td>nru_hint</td><td>2b</td><td>NRU 替换策略辅助位 {used, not_last}，初始化为 {0, 1}</td></tr>
+    <tr><td>valid</td><td>1b</td><td>写入时置 1</td></tr>
+  </tbody>
+</table>
+
+<h3>5.5 Entry 失效 (Invalidation)</h3>
+
+<h4>5.5.1 常规失效 (ATS Invalidation Request)</h4>
+<pre>
+触发条件：RC 发来 ATS Invalidation Request，经 atc_ctrl 分发
+
+失效命中判断逻辑 (与查表规则对称)：
+
+  CASE 1: 失效请求中 PV 无效
+    ├── 表中 PV 有效 → 仅比较 device_function_ID（通过则失效）
+    └── 表中 PV 无效 → 比较 device_function_ID AND untranslated_addr（通过则失效）
+
+  CASE 2: 失效请求中 PV 有效
+    └── 比较 PV AND PASID AND device_function_ID AND untranslated_addr
+        （全部通过则失效）
+
+执行：
+  ├── 清空命中 entry 的 valid 位和地址信息
+  ├── 将失效命中信息反馈给 atc_ctrl (e2c_inv_valid, e2c_inv_hit_idx)
+  ├── 失效完成后清除 NRU 状态 (used=0, not_last=1)
+  └── 失效完成后可向该 entry 存入新的 translation
+</pre>
+
+<h4>5.5.2 ATS Enable 切换失效</h4>
+<pre>
+触发条件：ats_enable_toggle = 1 (ats_enable 发生 0→1 或 1→0 变化)
+
+行为：
+  ┌─ ats_enable 0→1 (ATS 刚使能)：清除所有 entry (全局无效)，从干净状态开始
+  └─ ats_enable 1→0 (ATS 禁用)：清除所有 entry，DMA 后续使用 1:1 直通 (identity map)
+
+实现：
+  ats_enable_toggle 有效 → 遍历全部 2048 entry → valid 清 0
+  多 cycle 完成 (如 4 cycle 清理 512 entry/cycle)
+</pre>
+
+<h4>5.5.3 FLR (Function Level Reset) 失效 <span class="resolved">【新增独立信号】</span></h4>
+<pre>
+触发条件：flr_req = 1, flr_func_id = 目标 Function ID
+
+行为：
+  遍历全部 2048 entry，清除所有 device_function_ID 匹配的 entry：
+    for each entry:
+      if entry.valid AND entry.func_id == flr_func_id:
+        entry.valid  &lt;= 0
+        entry.nru    &lt;= {0, 1}   // 重置 NRU 状态
+
+与 ATS toggle 的区别：
+  ├── ATS toggle：清除 <strong>全部</strong> entry (全局操作)
+  └── FLR：仅清除 <strong>指定 Function</strong> 的 entry (选择性操作)
+
+接口设计理由：
+  FLR 通过独立信号直接触发而非间接通过 ATS disable 实现，原因：
+  1. 语义清晰，FLR 是独立的 PCIe reset 事件
+  2. 响应速度快，无需等待 ATS enable 边沿检测
+  3. 可精确清除单个 Function 的 entry，不影响其他 Function
+</pre>
+
+<!-- ============================================================ -->
+<!-- 6. Entry 存储格式 -->
+<!-- ============================================================ -->
+<h2>6. Entry 存储格式</h2>
+
+<table>
+  <thead><tr><th>字段</th><th>位宽</th><th>描述</th></tr></thead>
+  <tbody>
+    <tr><td>valid</td><td>1b</td><td>Entry 有效位。1=有效，0=空闲可分配</td></tr>
+    <tr><td>PV</td><td>1b</td><td>Protection Vector。PV 有效时作为 PASID 比较的门控条件。参数: <code>PV_WIDTH</code></td></tr>
+    <tr><td>PASID</td><td>20b</td><td>Process Address Space ID。参数: <code>PASID_WIDTH</code></td></tr>
+    <tr><td>device_function_ID</td><td>16b</td><td>PCIe BDF 标识 {Bus[7:0], Device[4:0], Function[2:0]}。参数: <code>FUNC_ID_WIDTH</code></td></tr>
+    <tr><td>untranslated_addr</td><td>64b</td><td>Guest 虚拟地址 (GVA)。参数: <code>VA_WIDTH</code></td></tr>
+    <tr><td>STU</td><td>5b</td><td>Segment Translation Unit = log2(page_size)。范围: 12 (4KB) ~ 30+ (1GB+)。参数: <code>STU_WIDTH</code></td></tr>
+    <tr><td>translated_addr</td><td>64b</td><td>Host 物理地址 (HPA)。参数: <code>PA_WIDTH</code></td></tr>
+    <tr><td>perm</td><td>4b</td><td>权限 {r_valid, read, write, exec}</td></tr>
+    <tr><td>nru_hint</td><td>2b</td><td>NRU 替换辅助 {used, not_last}</td></tr>
+    <tr><td colspan="2"><strong>单 Entry 总计</strong></td><td><strong>1+1+20+16+64+5+64+4+2 = 177b</strong></td></tr>
+    <tr><td colspan="2"><strong>TAG 存储 (寄存器阵列)</strong></td><td><strong>2048 &times; 107b ≈ 219 Kb (valid+PV+PASID+FuncID+VA+STU)</strong></td></tr>
+    <tr><td colspan="2"><strong>DATA 存储 (Sync SRAM)</strong></td><td><strong>2048 &times; 68b ≈ 139 Kb (PA+perm) — atc_data_sram 模块</strong></td></tr>
+    <tr><td colspan="2"><strong>NRU 存储 (寄存器阵列)</strong></td><td><strong>2048 &times; 2b ≈ 4 Kb</strong></td></tr>
+    <tr><td colspan="2"><strong>总计</strong></td><td><strong>2048 &times; 177b ≈ 362 Kb (约 45 KB)</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="card-note">
+  <div class="card-title">v2.3: TAG/SRAM 分离存储</div>
+  <p>TAG (107b: valid+PV+PASID+FuncID+VA+STU) 使用寄存器阵列实现，支持 S1 阶段 64-way &times; 17-addr 并行组合比较。DATA (68b: PA+perm) 使用 Sync SRAM (atc_data_sram)，rd_en 在 S1 发出，数据在 S2 返回。TAG 和 SRAM 共用写使能同时写入。</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- 7. 组相联映射与 NRU 替换 -->
+<!-- ============================================================ -->
+<h2>7. 组相联映射与 NRU 替换</h2>
+
+<h3>7.1 Hash 映射函数 <span class="resolved">【v2.4 更新】</span></h3>
+<pre>
+// 基础 hash (prefetch_enable=0): 4KB 对齐
+set_index = partition_hash(cfg_num_users, func_id[5:0], func_id, va)
+          // partition_hash 内部: func_id[3:0] ^ va[15:12] → 映射到 32 set
+
+// prefetch_enable=1: 64KB 对齐 hash (v2.4)
+//   将 va[19:16] 复制到 va[15:12] 位置后再调用 partition_hash,
+//   使 partition_hash 内部 XOR 使用 va[19:16] 而非 va[15:12]。
+//   效果: 当前地址 + 16 个预取偏移 (va[15:12] 遍历 0~15) 产生
+//   相同的 set_index, 确保全部 17 地址在同一 set。
+
+// 32 sets × 64 ways = 2048 entries
+// XOR 混合 FuncID 低位和地址高位，提高不同 VF 的 set 分布均匀度
+</pre>
+
+<h3>7.2 NRU (Not Recently Used) 替换策略</h3>
+<pre>
+每个 entry 维护 2b NRU 状态 (编码: {used, not_last})：
+  ┌────────┬──────────┬──────────┬──────────────────────────────┐
+  │  used  │ not_last │  编码     │           含义                 │
+  ├────────┼──────────┼──────────┼──────────────────────────────┤
+  │   0    │    1     │  FREE    │ 空闲 (复位值) / 最高替换优先级  │  ← 优先替换
+  │   0    │    0     │  IDLE    │ 衰减后冷条目 / 次高替换优先级   │
+  │   1    │    1     │  ACTIVE  │ 活跃 (insert/lookup 命中置位)  │
+  │   1    │    0     │  PROTECT │ 保护 (用于 pin 住关键 entry)   │
+  └────────┴──────────┴──────────┴──────────────────────────────┘
+
+替换选择流程 (victim search, 按优先级递减):
+  1. FREE  (used=0, not_last=1) → 优先替换
+  2. IDLE  (used=0, not_last=0) → 次优先替换
+  3. ACTIVE(used=1, not_last=1) → 再次之
+  4. 任意有效 entry (兜底)
+
+访问更新:
+  ├── Lookup 命中: 命中 way → ACTIVE ({1,1})
+  ├── Insert 写入: 写入 way → ACTIVE ({1,1}) <span class="resolved">【v2.4 新增】</span>
+  ├── nru_clear_all_used: 仅清除所有 used 位; 第 0 路额外清除 not_last (防活锁)
+  └── 定期衰减 (NRU_DECAY_INTERVAL=1024): <span class="resolved">【v2.4 修正】</span>
+      只衰减 nru_used==1 的条目 (ACTIVE/PROTECT → IDLE):
+        nru_used[i]     &lt;= 0
+        nru_not_last[i] &lt;= 0
+      FREE 条目 (used=0, not_last=1) 和 IDLE 条目 (used=0, not_last=0) 保持不变,
+      确保 FREE 优先级始终高于衰减后的 IDLE, 保证空闲 slot 被优先复用。
+</pre>
+
+<!-- ============================================================ -->
+<!-- 8. 时序与流水线设计 (1GHz 专项) -->
+<!-- ============================================================ -->
+<h2>8. 时序与流水线设计 (SF4X @1GHz) <span class="resolved">【新增章节】</span></h2>
+
+<div class="card-timing">
+  <div class="card-title">1GHz 时序约束分析</div>
+  <p>SF4X (Samsung 4nm-class) 工艺，典型标准单元延迟 ~8-12ps/gate。1ns 周期约对应 80-120 级逻辑门深度。以下分析各路径的时序可行性。</p>
+</div>
+
+<h3>8.1 Lookup 关键路径分析 (S1 Stage) <span class="resolved">【v2.3 更新】</span></h3>
+
+<table>
+  <thead><tr><th>路径</th><th>操作</th><th>逻辑级数</th><th>预估延迟</th><th>裕量</th></tr></thead>
+  <tbody>
+    <tr><td>Hash + Set Decode</td><td>func_id[3:0] ^ va[15:12] + partition_hash() + 5b to 32 decoder</td><td>~18 gates</td><td>~200ps</td><td style="color:var(--accent-green)">800ps ✓</td></tr>
+    <tr><td>Tag Register Read</td><td>64-way &times; 107b 寄存器读取 (set 内)</td><td>寄存器阵列</td><td>~50ps</td><td style="color:var(--accent-green)">950ps ✓</td></tr>
+    <tr><td>PV Compare</td><td>1b equality + valid check</td><td>~5 gates</td><td>~50ps</td><td style="color:var(--accent-green)">950ps ✓</td></tr>
+    <tr><td>PASID (20b) + FuncID (16b) Compare</td><td>两个 equality (并行)</td><td>~8 gates</td><td>~80ps</td><td style="color:var(--accent-green)">920ps ✓</td></tr>
+    <tr><td>Addr Compare (&times;1088)</td><td>64b compare &times; 64 way &times; 17 addr</td><td>~12 gates</td><td>~120ps</td><td style="color:var(--accent-green)">880ps ✓</td></tr>
+    <tr><td>Hit Encoder (64:1)</td><td>Priority encoder + mux (17 组并行)</td><td>~10 gates</td><td>~100ps</td><td style="color:var(--accent-green)">900ps ✓</td></tr>
+    <tr style="background:rgba(248,81,73,0.08)"><td><strong>S1 总关键路径</strong></td><td><strong>Tag Reg → 17-addr Compare &times;64way → Hit Enc</strong></td><td><strong>~60 gates</strong></td><td><strong>~600ps</strong></td><td style="color:var(--accent-orange)"><strong>400ps ✓</strong></td></tr>
+  </tbody>
+</table>
+
+<div class="card-note">
+  <div class="card-title">v2.3 变更: Sync SRAM 分离</div>
+  <p>SRAM 数据读取已从 S1 关键路径移除。S1 仅做 TAG 比较并发出 rd_en；Sync SRAM 在下一周期 (S2) 返回数据。S2/S3 阶段的关键路径远小于 1ns，无时序风险。</p>
+</div>
+
+<h3>8.2 流水线结构 <span class="resolved">【v2.3 更新: 4-stage】</span></h3>
+
+<pre class="ascii">
+          Cycle 0        │      Cycle 1       │      Cycle 2       │      Cycle 3
+                         │                    │                    │
+  Lookup: ───────────────┼────────────────────┼────────────────────┼──────────────►
+          S0: Dispatch   │  S1: TAG Compare   │  S2: SRAM Read     │  S3: Result
+          hash+set sel   │  64way×17 cmp+hit  │  data returns      │  response out
+                         │  SRAM rd_en issued │                    │
+                         │                    │                    │
+  Insert: ───────────────┼────────────────────┼────────────────────┼──────────────►
+          S0: DupCheck[0]│  S1: DupCheck[1]   │  S2: DupCheck[2]   │  S3: DupCheck[3]
+          (set 0-7)      │  (set 8-15)        │  (set 16-23)       │  (set 24-31)
+                         │                    │                    │
+          ───────────────┼────────────────────┼────────────────────┼──────────────►
+          Cycle 4        │
+                         │
+          S4: NRU sel    │
+          + TAG/SRAM wr  │
+</pre>
+
+<h3>8.3 物理实现建议 <span class="resolved">【v2.3 更新】</span></h3>
+<ul>
+  <li><strong>TAG/数据分离存储：</strong>TAG (107b/entry) 使用寄存器阵列实现组合比较；DATA (68b/entry) 使用 Sync SRAM macro (2048&times;68b)。SRAM 读延迟 1 cycle，不占用 S1 关键路径</li>
+  <li><strong>比较器布局：</strong>64 way &times; 17 addr = 1088 个 64b 比较器围绕 TAG 寄存器阵列排列，物理上靠近寄存器输出端口，减少走线延迟</li>
+  <li><strong>Hit 编码器：</strong>使用分层优先编码器 (8&times;8 + 8:1)，减少级联深度。17 组 hit vector 共享编码器结构</li>
+  <li><strong>流水线寄存器：</strong>S0/S1、S1/S2、S2/S3 之间插入寄存器。S1 寄存器捕获 TAG 比较结果；S2 寄存器捕获 SRAM 返回数据；S3 寄存器驱动输出</li>
+  <li><strong>Clock gating：</strong>仅被选中的 set 进行 way 比较和 SRAM 读，其余 31 个 set 的 TAG 比较器和 SRAM clock-gated</li>
+</ul>
+
+<!-- ============================================================ -->
+<!-- 9. RTL 模块树与层次 -->
+<!-- ============================================================ -->
+<h2>9. RTL 模块树</h2>
+
+<pre>
+atc_top (顶层)
+├── atc_pkg (全局参数包)
+├── atc_ctrl (控制器) <span class="resolved">【新增完整框架】</span>
+│   ├── atc_lookup_engine    (查表引擎, 4-stage pipeline, sync SRAM)
+│   ├── atc_dupcheck         (重复检测, 4-cycle 全遍历)
+│   ├── atc_inv_handler      (失效处理: regular + ATS toggle + FLR) <span class="resolved">【新增 FLR 路径】</span>
+│   ├── atc_nru_replacer     (NRU 替换策略)
+│   ├── atc_req_arbiter      (请求仲裁)
+│   └── atc_csr_if           (CSR 接口适配: ats_enable, flr_req 等)
+└── atc_entry_array (存储阵列)
+    └── atc_set [31:0] (32 个 set 实例)
+        ├── atc_entry [63:0] (64 个 entry per set)
+        └── nru_state [63:0] (NRU 状态寄存器 per way, 2b each)
+</pre>
+
+<!-- ============================================================ -->
+<!-- 10. 参数汇总 (atc_pkg) -->
+<!-- ============================================================ -->
+<h2>10. 参数汇总</h2>
+
+<table>
+  <thead><tr><th>参数名</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>N_SETS</code></td><td>32</td><td>Set 数量</td></tr>
+    <tr><td><code>N_WAYS</code></td><td>64</td><td>每 Set 的 Way 数量</td></tr>
+    <tr><td><code>N_ENTRIES</code></td><td>2048</td><td>Entry 总数 = N_SETS × N_WAYS</td></tr>
+    <tr><td><code>SET_IDX_W</code></td><td>5</td><td>Set 索引位宽 = log2(32)</td></tr>
+    <tr><td><code>WAY_IDX_W</code></td><td>6</td><td>Way 索引位宽 = log2(64)</td></tr>
+    <tr><td><code>ENTRY_IDX_W</code></td><td>11</td><td>Entry 索引位宽 = log2(2048)</td></tr>
+    <tr><td><code>PV_WIDTH</code></td><td>1</td><td>Protection Vector 位宽</td></tr>
+    <tr><td><code>PASID_WIDTH</code></td><td>20</td><td>PASID 位宽</td></tr>
+    <tr><td><code>FUNC_ID_WIDTH</code></td><td>16</td><td>Device Function ID 位宽</td></tr>
+    <tr><td><code>VA_WIDTH</code></td><td>64</td><td>虚拟地址位宽</td></tr>
+    <tr><td><code>PA_WIDTH</code></td><td>64</td><td>物理地址位宽</td></tr>
+    <tr><td><code>STU_WIDTH</code></td><td>5</td><td>STU 位宽 (log2 编码, 覆盖 4KB~1GB+)</td></tr>
+    <tr><td><code>PERM_WIDTH</code></td><td>4</td><td>权限位宽</td></tr>
+    <tr><td><code>NRU_HINT_W</code></td><td>2</td><td>NRU 替换辅助位宽 {used, not_last}</td></tr>
+    <tr><td><code>LOOKAHEAD_OFFSET</code></td><td>64'h1_0000</td><td>64KB 预查偏移量 (ea_cmp_addr[16] = lu_req_va + 64KB)</td></tr>
+    <tr><td><code>ENTRY_WIDTH</code></td><td>177</td><td>单 Entry 总位宽 (valid+PV+PASID+FuncID+VA+STU+PA+perm+NRU)</td></tr>
+    <tr><td><code>TAG_WIDTH</code></td><td>118</td><td>TAG 存储位宽 (寄存器阵列, valid+PV+PASID+FuncID+VA+STU)</td></tr>
+    <tr><td><code>DATA_WIDTH</code></td><td>68</td><td>DATA 存储位宽 (Sync SRAM, PA+perm)</td></tr>
+    <tr><td><code>PREFETCH_COUNT</code></td><td>17</td><td>预取地址数量 (1 当前 + 16 预取偏移)</td></tr>
+    <tr><td><code>PIPELINE_STAGES</code></td><td>4</td><td>Lookup 流水线级数 (S0,S1,S2,S3)</td></tr>
+    <tr><td><code>DUPCHECK_CYCLES</code></td><td>4</td><td>重复检测全遍历所需 cycle 数</td></tr>
+    <tr><td><code>NRU_DECAY_INTERVAL</code></td><td>1024</td><td>NRU used 位定期衰减间隔 (cycle)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 11. 设计决策确认汇总 -->
+<!-- ============================================================ -->
+<h2>11. 设计决策确认汇总</h2>
+
+<table>
+  <thead><tr><th>#</th><th>确认项</th><th>决策</th><th>理由</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>1</td><td>模块命名</td><td class="resolved"><strong>atc_ 前缀</strong></td>
+      <td>与 PCIe ATS 标准术语对齐，顶层 atc_top 统一命名</td>
+    </tr>
+    <tr>
+      <td>2</td><td>组织方式</td><td class="resolved"><strong>32 sets × 64 ways</strong></td>
+      <td>2048 entry，冲突率极低。64-way×17-addr 比较器在 SF4X 1GHz 下经 4-stage 流水线分解可行</td>
+    </tr>
+    <tr>
+      <td>3</td><td>PV 位宽</td><td class="resolved"><strong>16b</strong></td>
+      <td>与 PASID 宽度对齐，64 VF 仅需 6b，16b 留足扩展空间。参数化 <code>PV_WIDTH</code> 可调</td>
+    </tr>
+    <tr>
+      <td>4</td><td>Function ID 位宽</td><td class="resolved"><strong>16b</strong></td>
+      <td>PCIe 标准 BDF: Bus[7:0]+Device[4:0]+Function[2:0]=16b，完全匹配。参数化 <code>FUNC_ID_WIDTH</code></td>
+    </tr>
+    <tr>
+      <td>5</td><td>STU 编码方式</td><td class="resolved"><strong>5b, 存 log2(page_size)</strong></td>
+      <td>STU=N → 2^(N+12)-byte 对齐 (PCIe ATS 标准)。mask = addr &amp; ~((1&lt;&lt;(STU+12))-1)。参数化 <code>STU_WIDTH</code></td>
+    </tr>
+    <tr>
+      <td>6</td><td>17-地址预取</td><td class="resolved"><strong>当前 + 4KB~64KB 共 17 地址</strong></td>
+      <td><code>PREFETCH_COUNT=17</code>。ea_cmp_addr[0]=当前，[1:16]=+4KB~+64KB (16 个 4KB 步进)。17×64 个比较器</td>
+    </tr>
+    <tr>
+      <td>7</td><td>ATS enable 信号</td><td class="resolved"><strong>ats_enable + ats_enable_toggle</strong></td>
+      <td>来自 PCIe Config Space CSR。toggle 由上层模块打拍边沿检测生成</td>
+    </tr>
+    <tr>
+      <td>8</td><td>FLR 接口</td><td class="resolved"><strong>独立 flr_req + flr_func_id</strong></td>
+      <td>直接信号输入，不通过 ATS disable 间接实现。精确清除单 Function entry，语义清晰</td>
+    </tr>
+    <tr>
+      <td>9</td><td>atc_ctrl 顶层框架</td><td class="resolved"><strong>完整框架 (新增 §4)</strong></td>
+      <td>atc_ctrl 负责仲裁、分发、NRU 替换、接口管理，是各子模块协同工作的枢纽</td>
+    </tr>
+    <tr>
+      <td>10</td><td>目标工艺/频率</td><td class="resolved"><strong>SF4X @ 1GHz</strong></td>
+      <td>4-stage 流水线 + Sync SRAM，S1 stage ~600ps 满足 1ns 周期，详见 §8 时序分析</td>
+    </tr>
+    <tr>
+      <td>11</td><td>设计定位</td><td class="resolved"><strong>EP 侧 ATC 控制器</strong></td>
+      <td>Endpoint 设备内缓存 RC 返回的 translation，服务 DMA 引擎查表</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 12. 用户分区功能 -->
+<!-- ============================================================ -->
+<h2>12. 用户分区功能 <span class="resolved">【v0.3 新增】</span></h2>
+
+<div class="card">
+  <div class="card-title">设计目标</div>
+  <p>在 SR-IOV 多 VF 场景下，通过 <code>csr_num_users</code> (3-bit) 将 2048 个 entry <strong>平均切分</strong>为独立分区。每个 VF 只能访问自己分区内的 entry，实现硬件级隔离，防止单 VF 驱逐其他 VF 的 cache entry。</p>
+</div>
+
+<h3>12.1 分区模式</h3>
+<table>
+  <thead><tr><th>csr_num_users</th><th>用户数</th><th>每用户 Entries</th><th>每用户 Sets</th><th>每用户 Ways</th><th>切分方式</th></tr></thead>
+  <tbody>
+    <tr><td>0 (PART_1)</td><td>1</td><td>2048</td><td>32</td><td>64</td><td>不分 (默认)</td></tr>
+    <tr><td>1 (PART_2)</td><td>2</td><td>1024</td><td>16</td><td>64</td><td>set 级切分</td></tr>
+    <tr><td>2 (PART_4)</td><td>4</td><td>512</td><td>8</td><td>64</td><td>set 级切分</td></tr>
+    <tr><td>3 (PART_8)</td><td>8</td><td>256</td><td>4</td><td>64</td><td>set 级切分</td></tr>
+    <tr><td>4 (PART_16)</td><td>16</td><td>128</td><td>2</td><td>64</td><td>set 级切分</td></tr>
+    <tr><td>5 (PART_32)</td><td>32</td><td>64</td><td>1</td><td>64</td><td>set 级切分</td></tr>
+    <tr><td>6 (PART_64)</td><td>64</td><td>32</td><td>32</td><td>32</td><td>set + way 混合</td></tr>
+    <tr><td>7 (PART_48)</td><td>48</td><td>32</td><td>32</td><td>32</td><td>复用 64 用户硬件 (1536 条目使用)</td></tr>
+  </tbody>
+</table>
+
+<h3>12.2 切分策略</h3>
+
+<h4>12.2.1 Set 级切分 (&le;32 用户)</h4>
+<p>每个用户独占 <code>32/N</code> 个完整 set（含全部 64 way）。Hash 函数 <code>partition_hash()</code> 将请求映射到用户分区内的 set:</p>
+<pre>user_id      = func_id[5:0] % N
+sets_per_user = 32 / N
+base_set     = user_id * sets_per_user
+local_set    = raw_hash % sets_per_user
+final_set    = base_set + local_set</pre>
+
+<h4>12.2.2 Set+Way 混合切分 (&gt;32 用户)</h4>
+<p>每个 set 内按 way 切分。以 64 用户为例: user 0 占 ways 0-31, user 1 占 ways 32-63。48 用户复用相同硬件。</p>
+<pre>users_per_set = ceil(N/32)
+ways_per_user = 64 / users_per_set
+way_base      = (user_id % users_per_set) * ways_per_user
+way_limit     = way_base + ways_per_user
+// NRU victim 限定在 [way_base, way_limit)</pre>
+
+<h3>12.3 分区感知模块</h3>
+<table>
+  <thead><tr><th>模块</th><th>分区影响</th></tr></thead>
+  <tbody>
+    <tr><td><code>atc_lookup_engine</code></td><td>Hash 使用 partition_hash()，自动映射到用户 set 范围</td></tr>
+    <tr><td><code>atc_ctrl</code></td><td>Insert hash 使用分区映射；NRU way_base/limit 计算</td></tr>
+    <tr><td><code>atc_nru_replacer</code></td><td>Victim 搜索限定 [way_base, way_limit)；条件屏蔽兼容 DC</td></tr>
+    <tr><td><code>atc_inv_handler</code></td><td>失效扫描从 [0,31] 缩小到 [base, limit)；ATS toggle 全局</td></tr>
+    <tr><td><code>atc_csr_if</code></td><td>csr_num_users pass-through 到 cfg_num_users</td></tr>
+  </tbody>
+</table>
+
+<div class="card-note">
+  <div class="card-title">重要约束</div>
+  <ul>
+    <li><strong>动态切换:</strong> csr_num_users 变更后建议通过 ATS toggle 清除全部 entry 后再切换分区模式</li>
+    <li><strong>48 用户限制:</strong> 复用 64 用户硬件，48&times;32=1536 条目，512 条目未使用</li>
+    <li><strong>NRU 兼容:</strong> 分区搜索使用条件屏蔽 (in_range) 而非变量 bounds，满足 DC 综合 ELAB-800 约束</li>
+  </ul>
+</div>
+
+<!-- ============================================================ -->
+<!-- 变更记录 -->
+<!-- ============================================================ -->
+<h2>附录 A: 变更记录</h2>
+
+<table>
+  <thead><tr><th>版本</th><th>日期</th><th>变更内容</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>v0.1</td><td>2025</td><td>初始版本，基于图片 OCR 分析生成。包含 9 项待确认问题</td>
+    </tr>
+    <tr>
+      <td>v0.2</td><td>2026-06-06</td>
+      <td>
+        <ul>
+          <li>全局 htc_ → atc_ 命名统一</li>
+          <li>明确 EP 侧 ATC 控制器定位</li>
+          <li>新增 §4 atc_ctrl 顶层框架完整设计 (仲裁、流水线、NRU)</li>
+          <li>新增 §3.2 配置信号组 (ats_enable, ats_enable_toggle, flr_req, flr_func_id)</li>
+          <li>新增 §3.5 atc_top 对外接口 (DMA/ATS)</li>
+          <li>新增 §5.5.3 FLR 独立失效路径</li>
+          <li>新增 §8 1GHz 时序专项分析与流水线设计</li>
+          <li>§11 汇总所有 9 项待确认问题的分析结论与决策</li>
+          <li>更新 §6 Entry 格式：增加 translated_addr/valid/nru_hint，总位宽 188b</li>
+          <li>更新 §9 模块树：补充 atc_ctrl 子模块层次</li>
+          <li>更新 §10 参数表：增加 PIPELINE_STAGES、DUPCHECK_CYCLES、NRU_DECAY_INTERVAL</li>
+          <li>原 §8 待确认项 → §11 确认汇总 (所有项已决策)</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="resolved">v2.3</td><td>2026-06-26</td>
+      <td>
+        <ul>
+          <li>流水线从 3-stage 升级为 4-stage: S0(Dispatch) → S1(TAG Compare + SRAM rd_en) → S2(SRAM Data Return) → S3(Result Output)</li>
+          <li>SRAM 从异步读改为同步读 (atc_data_sram): rd_en + rd_addr 在 posedge 锁存，下一周期数据返回</li>
+          <li>修正 STU 掩码定义: STU=N → 2^(N+12)-byte 对齐 (PCIe ATS 标准)。apply_stu_mask() shift = stu + 12</li>
+          <li>修复 prefetch_offsets[16] 常量错误: 64'h0000_0001_0000_0000 (4GB) → 64'h0000_0000_0001_0000 (64KB)</li>
+          <li>PIPELINE_STAGES 参数: 3 → 4</li>
+          <li>新增 ats_comp_update_done 输出: ATS Completion 写入完成脉冲 (TAG+SRAM 均已更新)</li>
+          <li>新增 prefetch_hit[15:0] 输出: 16 个预取偏移独立命中指示 (per-bit 门控)</li>
+          <li>明确信号语义: dma_lu_rsp_hit/dma_rl_rsp_hit 仅反映当前地址精确命中；预取信息通过 prefetch_hit[15:0] 独立输出</li>
+          <li>更新 §3.5 接口表: 完整列出 atc_top 所有对外信号 (含位宽修正 PV=1b, PASID=20b)</li>
+          <li>更新 §4.3 流水线: 4-stage 结构 + 时序分析</li>
+          <li>更新 §5.2 预取: 17 地址并行比较描述</li>
+          <li>更新 §6 Entry 格式: TAG/SRAM 分离存储说明</li>
+          <li>更新 §8 时序: S1 关键路径不含 SRAM 读</li>
+          <li>更新 §10 参数表: ENTRY_WIDTH, TAG_WIDTH, DATA_WIDTH, PREFETCH_COUNT</li>
+          <li>修复 relook grant/数据错位: atc_req_arbiter 新增 relook 数据寄存器 (rl_req_data_pv/pasid/func_id/va)，与 rl_req_grant 同步打拍，消除背靠背请求丢数据问题</li>
+          <li>修复 flow-control ready 不考虑优先级抢占: lu/rl/ins/inv_req_ready 增加高优先级请求门控，防止低优先级请求在仲裁失败时数据被错误采样</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="resolved">v2.4</td><td>2026-07-02</td>
+      <td>
+        <ul>
+          <li><strong>NRU insert 更新修复:</strong> Insert 写入时通过 mux (ins_nru_update_en) 将 NRU 状态更新为 ACTIVE ({1,1})，解决连续 insert 同一 way 被重复选为 victim 导致数据覆盖的 bug</li>
+          <li><strong>NRU decay 修正:</strong> 定期衰减 (NRU_DECAY_INTERVAL=1024) 改为仅衰减 nru_used==1 的条目 (ACTIVE/PROTECT → IDLE)。FREE 条目 (used=0,not_last=1) 保持不变，确保 FREE 优先级高于衰减后的 IDLE，防止空闲 slot 被跳过</li>
+          <li><strong>NRU 状态编码文档化:</strong> 明确定义 FREE(01), IDLE(00), ACTIVE(11), PROTECT(10) 四种状态语义及替换优先级排序</li>
+          <li><strong>prefetch_enable hash 切换:</strong> 当 csr_prefetch_enable[func_id]==1 时，lookup 和 insert 路径使用 64KB 对齐 hash (va[19:16] 替代 va[15:12])，确保 17 个预取地址全部落入同一 set</li>
+          <li><strong>prefetch 输出门控:</strong> prefetch_rsp_valid[15:0], prefetch_hit[15:0], dma_lu_rsp_pre_hit 均通过 prefetch_enable 门控，prefetch_enable=0 的 function 不会产生预取输出</li>
+          <li><strong>ats_enable 门控修正:</strong> dma_lu_rsp_hit / dma_lu_rsp_pre_hit 的 ats_enable 门控改用 pipeline 跟踪的 rsp_func_id_s3 而非当前输入的 arb_lu_func_id，消除 4-cycle 流水线期间的 func_id 错配</li>
+          <li><strong>新增 4-stage func_id pipeline:</strong> atc_ctrl 内部新增 rsp_is_lookup[3:0] + rsp_func_id_s0~s3 流水线寄存器，跟踪每个响应对应的原始 function ID</li>
+          <li><strong>hash_va 位宽修正:</strong> 64KB 对齐 hash_va 拼接从 {va[63:17], va[19:16], va[11:0]} (63-bit) 修正为 {va[63:20], va[19:16], va[19:16], va[11:0]} (64-bit)</li>
+          <li>更新 §5.2: 新增 5.2.1 prefetch_enable 门控与 hash 切换描述</li>
+          <li>更新 §5.4: Entry 更新增加 NRU ACTIVE 置位说明</li>
+          <li>更新 §7.1: Hash 函数增加 prefetch_enable 64KB 对齐说明</li>
+          <li>更新 §7.2: NRU 状态编码完整文档化 + decay 行为修正</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="resolved">v2.2</td><td>2026-06-18</td>
+      <td>
+        <ul>
+          <li>新增 dma_lu_req_ready/dma_rl_req_ready/ats_inv_req_ready/ats_comp_ready flow-control 信号</li>
+          <li>新增 csr_flr_req_done FLR 完成指示</li>
+          <li>新增 prefetch_rsp_valid[15:0] 预取有效信号</li>
+          <li>atc_req_arbiter: 4 个 combinational ready 输出</li>
+          <li>atc_ctrl: ready 透传 + flr_done + prefetch_rsp_valid 生成</li>
+          <li>VCS 回归: 31 测试全部通过</li>
+          <li>SpyGlass Lint: 0 Fatals, 与 v2.1 持平</li>
+        </ul>
+      </td>
+    </tr>
+      <td class="resolved">v2.1</td><td>2026-06-15</td>
+      <td>
+        <ul>
+          <li>新增 DMA Relook 接口 (第二次查找, 不含预取)</li>
+          <li>仲裁优先级更新: Insert > Relook > Lookup</li>
+          <li>atc_req_arbiter: 新增 RELOOK 请求类型, rl_req/rl_grant</li>
+          <li>atc_ctrl: relook mux 复用 lookup pipeline, relook 响应 pre_hit=0</li>
+          <li>atc_top: 8 个 relook 端口 (req+rsp)</li>
+        </ul>
+      </td>
+    </tr>
+      <td class="resolved">v2.0</td><td>2026-06-15</td>
+      <td>
+        <ul>
+          <li>PV_WIDTH: 16→1 (PASID Valid flag)</li>
+          <li>PASID_WIDTH: 16→20 (PCIe 标准)</li>
+          <li>ENTRY_WIDTH: 188→177b, TAG_WIDTH: 118→107b</li>
+          <li>新增 17-地址并行比较器 (generate loop, 16 预取 + 当前)</li>
+          <li>新增 per-function ats_enable[63:0] 门控</li>
+          <li>新增 per-function prefetch_enable[63:0]</li>
+          <li>新增 atc_top prefetch 输出端口 (16路 hit/pa/perm)</li>
+          <li>atc_entry_tag: 17 路 STU 掩码比较器</li>
+          <li>atc_set/entry_array: 17 hit vectors per set</li>
+          <li>atc_lookup_engine: 17 地址 dispatch + prefetch 响应</li>
+          <li>atc_csr_if: 64-bit ats_enable 同步 + per-bit toggle 检测</li>
+          <li>VCS 仿真: 28 测试全部通过</li>
+        </ul>
+      </td>
+    </tr>
+      <td class="resolved">v0.3</td><td>2026-06-11</td>
+      <td>
+        <ul>
+          <li>新增 §12 用户分区功能完整说明 (1/2/4/8/16/32/48/64 用户)</li>
+          <li>atc_pkg 新增: PART_1~64/48 常量, partition_hash(), get_user_set_base/limit(), get_user_way_base/limit()</li>
+          <li>§3.2 CSR 新增: csr_num_users (3-bit)</li>
+          <li>atc_nru_replacer: 分区感知 victim 搜索 (way_base/limit, DC 兼容)</li>
+          <li>atc_inv_handler: 分区感知失效扫描 (set_base/limit)</li>
+          <li>atc_lookup_engine: 分区感知 hash</li>
+          <li>atc_ctrl: NRU way 范围计算, insert hash 分区映射</li>
+          <li>atc_csr_if: csr_num_users pass-through</li>
+          <li>修复 FLR 死锁 (batch_cycle_cnt 2&rarr;6bit)</li>
+          <li>新增 NRU 全局清除机制 (all_used 检测 + auto-clear)</li>
+          <li>新增 ats_enable 门控逻辑</li>
+          <li>VCS 仿真: 31 测试全部通过 (含 7 分区测试, 10000 随机), 0 mismatch</li>
+          <li>DC 综合: elaboration 通过, LINT 无明显增加</li>
+        </ul>
+      </td>
+    </tr>
+  </tbody>
+</table>
+
+<hr>
+<p style="text-align:center; color:var(--accent-green); font-size:0.9em;">ATC Design Document v2.4 · EP-Side ATC Controller · SF4X @1GHz · 2026-07-02</p>
+<p style="text-align:center; color:var(--text-secondary); font-size:0.85em;">v2.4: NRU insert update fix, NRU decay fix, prefetch_enable hash switching + output gating, ats_enable gating fix, func_id pipeline; v2.3: 4-stage pipeline, Sync SRAM, STU 修正, ats_comp_update_done, prefetch_hit[15:0], grant/数据对齐修复, 优先级门控 ready; v2.2: Flow-control ready, FLR done; v2.1: Relook 接口; v2.0: 17-address prefetch</p>
+
+</div>
+</body>
+</html>

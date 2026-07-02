@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ATC 模块验证环境设计文档 & 验证计划 v2.3</title>
+<style>
+  :root {
+    --bg-primary: #0d1117;
+    --bg-secondary: #161b22;
+    --bg-tertiary: #21262d;
+    --text-primary: #e6edf3;
+    --text-secondary: #8b949e;
+    --accent-blue: #58a6ff;
+    --accent-green: #3fb950;
+    --accent-orange: #d29922;
+    --accent-red: #f85149;
+    --accent-purple: #bc8cff;
+    --accent-cyan: #39d2c0;
+    --border: #30363d;
+    --font-mono: 'Consolas', 'Monaco', 'Courier New', monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, 'Noto Sans SC', sans-serif;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg-primary); color: var(--text-primary);
+    font-family: var(--font-sans); line-height: 1.7;
+    padding: 40px 20px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 1.8em; font-weight:700; color:var(--accent-cyan); border-bottom:2px solid var(--border); padding-bottom:12px; margin-bottom:24px; }
+  h2 { font-size: 1.35em; font-weight:600; color:var(--accent-green); margin-top:40px; margin-bottom:14px; padding-left:10px; border-left:3px solid var(--accent-green); }
+  h3 { font-size: 1.1em; font-weight:600; color:var(--accent-orange); margin-top:28px; margin-bottom:10px; }
+  h4 { font-size: 1em; font-weight:600; color:var(--accent-purple); margin-top:20px; margin-bottom:8px; }
+  p { margin-bottom:12px; color:var(--text-primary); }
+  pre {
+    background: var(--bg-tertiary); border:1px solid var(--border); border-radius:8px;
+    padding: 16px 20px; overflow-x:auto; font-family:var(--font-mono); font-size:0.85em; line-height:1.5; margin:12px 0;
+  }
+  pre.ascii { color: var(--accent-blue); }
+  code { font-family:var(--font-mono); background:var(--bg-tertiary); padding:2px 6px; border-radius:4px; font-size:0.9em; color:var(--accent-purple); }
+  table { width:100%; border-collapse:collapse; margin:16px 0; font-size:0.9em; }
+  th { background:var(--bg-tertiary); color:var(--accent-blue); font-weight:600; text-align:left; padding:10px 12px; border:1px solid var(--border); }
+  td { padding:9px 12px; border:1px solid var(--border); color:var(--text-primary); }
+  tr:nth-child(even) { background:rgba(255,255,255,0.02); }
+  tr:hover { background:rgba(88,166,255,0.05); }
+  .card { background:var(--bg-secondary); border:1px solid var(--border); border-radius:10px; padding:20px 24px; margin:16px 0; }
+  .card-title { font-weight:600; color:var(--accent-cyan); margin-bottom:8px; font-size:1.05em; }
+  .card-note { background:rgba(210,153,34,0.08); border:1px solid var(--accent-orange); border-radius:10px; padding:16px 20px; margin:16px 0; }
+  .card-note .card-title { color:var(--accent-orange); }
+  hr { border:none; border-top:1px solid var(--border); margin:32px 0; }
+  .tag { color:var(--text-secondary); font-size:0.85em; }
+  ul, ol { margin-left:20px; margin-bottom:12px; color:var(--text-primary); }
+  li { margin-bottom:4px; }
+  .pass { color: var(--accent-green); }
+  .fail { color: var(--accent-red); }
+  .pending { color: var(--accent-orange); }
+  .io-in { color: var(--accent-green); }
+  .io-out { color: var(--accent-blue); }
+  .test-prio-p0 { background:rgba(248,81,73,0.15); }
+  .test-prio-p1 { background:rgba(210,153,34,0.10); }
+  .test-prio-p2 { background:rgba(255,255,255,0.02); }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>ATC 模块验证环境设计文档 & 验证计划</h1>
+<p class="tag">EP 侧 ATC · PV=1 PASID=20 · 17-addr Prefetch · SF4X @1GHz · UVM-lite · v2.3</p>
+
+<!-- ============================================================ -->
+<!-- Part 1: Verification Environment -->
+<!-- ============================================================ -->
+<h2>Part 1: 验证环境设计</h2>
+
+<div class="card">
+  <div class="card-title">设计概述</div>
+  <p>基于 <strong>SystemVerilog + UVM-lite</strong> 框架的模块级验证环境，采用不带 UVM 库的纯 SV 实现（兼容所有主流仿真器）。环境由 3 个 Agent（DMA/ATS/CSR）、1 个 Scoreboard、1 个 Monitor 和若干 Checker 组成。</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- 1.1 Architecture -->
+<!-- ============================================================ -->
+<h3>1.1 验证环境架构</h3>
+
+<pre class="ascii">
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         tb_atc_top                                      │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                  │
+│  │  DMA Agent   │  │  ATS Agent   │  │  CSR Agent   │                  │
+│  │              │  │              │  │              │                  │
+│  │ ┌──────────┐ │  │ ┌──────────┐ │  │ ┌──────────┐ │                  │
+│  │ │Sequencer │ │  │ │Sequencer │ │  │ │Sequencer │ │                  │
+│  │ └────┬─────┘ │  │ └────┬─────┘ │  │ └────┬─────┘ │                  │
+│  │      │       │  │      │       │  │      │       │                  │
+│  │ ┌────┴─────┐ │  │ ┌────┴─────┐ │  │ ┌────┴─────┐ │                  │
+│  │ │  Driver  │ │  │ │  Driver  │ │  │ │  Driver  │ │                  │
+│  │ └────┬─────┘ │  │ └────┬─────┘ │  │ └────┬─────┘ │                  │
+│  │      │       │  │      │       │  │      │       │                  │
+│  │ ┌────┴─────┐ │  │ ┌────┴─────┐ │  │                    Test         │
+│  │ │ Monitor  │ │  │ │ Monitor  │ │  │                  Sequences      │
+│  │ └────┬─────┘ │  │ └────┬─────┘ │  │                                │
+│  └──────┼───────┘  └──────┼───────┘  └──────┼─────────────────────────┘
+│         │                 │                 │
+│         │   DMA Lookup    │  ATS Comp/Inv   │  CSR (ats_enable, flr_req)
+│         ▼                 ▼                 ▼
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                        atc_top (DUT)                             │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│         │                 │                 │                          │
+│         │  DMA Response   │  ATS ACK        │                          │
+│         ▼                 ▼                 │                          │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │                     Scoreboard + Checker                         │   │
+│  │                                                                  │   │
+│  │  ┌────────────┐  ┌────────────┐  ┌─────────────┐               │   │
+│  │  │ Reference  │  │  Result    │  │  Assertion  │               │   │
+│  │  │  Model     │  │  Comparator│  │  Checkers   │               │   │
+│  │  └────────────┘  └────────────┘  └─────────────┘               │   │
+│  │                                                                  │   │
+│  │  ┌──────────────────────────────────────────────────────────┐   │   │
+│  │  │              Functional Coverage Collector                │   │   │
+│  │  └──────────────────────────────────────────────────────────┘   │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────┘
+</pre>
+
+<!-- ============================================================ -->
+<!-- 1.2 Components -->
+<!-- ============================================================ -->
+<h3>1.2 验证组件</h3>
+
+<table>
+  <thead><tr><th>组件</th><th>文件</th><th>功能</th></tr></thead>
+  <tbody>
+    <tr><td><code>tb_atc_top</code></td><td>tb_atc_top.sv</td><td>顶层 testbench：实例化 DUT + 各 Agent；时钟/复位生成 (1GHz clk)；测试启动</td></tr>
+    <tr><td><code>dma_agent</code></td><td>dma_agent.sv</td><td>DMA 查表请求驱动 + 响应监控。驱动 random/consecutive/targeted 地址序列</td></tr>
+    <tr><td><code>ats_agent</code></td><td>ats_agent.sv</td><td>ATS Completion + ATS Invalidation 驱动。模拟 RC 行为</td></tr>
+    <tr><td><code>csr_agent</code></td><td>csr_agent.sv</td><td>CSR 配置驱动：ats_enable toggle、FLR 注入</td></tr>
+    <tr><td><code>atc_scoreboard</code></td><td>atc_scoreboard.sv</td><td><strong>核心</strong>：参考模型，预测每次查表的命中/缺失/地址结果；比对 DUT 输出</td></tr>
+    <tr><td><code>atc_monitor</code></td><td>atc_monitor.sv</td><td>被动监控 DUT 所有端口，收集事务给 scoreboard 和 coverage</td></tr>
+    <tr><td><code>atc_checker</code></td><td>atc_checker.sv</td><td>协议检查 + 时序断言 (SVA)：pipeline 行为、hit/miss 一致性、inv ack 时延</td></tr>
+    <tr><td><code>atc_cov</code></td><td>atc_cov.sv</td><td>功能覆盖率收集：cross PV × PASID × FuncID × Addr patterns</td></tr>
+    <tr><td><code>atc_test_pkg</code></td><td>atc_test_pkg.sv</td><td>测试序列库：所有 test case 的定义</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 1.3 Scoreboard Reference Model -->
+<!-- ============================================================ -->
+<h3>1.3 Scoreboard 参考模型设计</h3>
+
+<div class="card">
+  <div class="card-title">参考模型核心逻辑</div>
+  <p>Scoreboard 内部维护一个<strong>影子 ATC</strong>（2048 entry 的软件模型），实时镜像 DUT 的 TAG+SRAM 状态：</p>
+  <ol>
+    <li><strong>LOOKUP 时：</strong>参考模型对输入地址执行与 DUT 相同的 hash+compare 逻辑，预测 hit/miss + 翻译地址 + 64K pre-hit，与 DUT 输出比对</li>
+    <li><strong>INSERT 时：</strong>参考模型更新影子 entry（含 dupcheck 后覆盖或 NRU 分配），比对 DUT 的 dupcheck 结果</li>
+    <li><strong>INVALIDATE 时：</strong>参考模型清除匹配的 entry，比对 DUT 的 inv_ack/inv_hit_idx</li>
+    <li><strong>FLR/ATS Toggle 时：</strong>参考模型批量清除，比对 DUT 完成信号</li>
+  </ol>
+</div>
+
+<pre>
+Scoreboard 影子 ATC 数据结构 (per entry):
+┌────────┬──────┬────────┬────────┬──────────┬─────┬─────────────────┬──────┐
+│ valid  │  PV  │ PASID  │ FuncID │   GVA    │ STU │ translated_addr │ perm │
+│  1b    │ 16b  │  16b   │  16b   │   64b    │ 5b  │      64b        │  4b  │
+└────────┴──────┴────────┴────────┴──────────┴─────┴─────────────────┴──────┘
+</pre>
+
+<!-- ============================================================ -->
+<!-- 1.4 Checker Design -->
+<!-- ============================================================ -->
+<h3>1.4 Checker 设计 (SVA 断言)</h3>
+
+<table>
+  <thead><tr><th>断言名</th><th>类型</th><th>描述</th></tr></thead>
+  <tbody>
+    <tr><td><code>CHK_PIPELINE_LATENCY</code></td><td>时序</td><td>查表请求 → 响应严格 4 cycle latency (4-stage pipeline)</td></tr>
+    <tr><td><code>CHK_LOOKUP_THROUGHPUT</code></td><td>吞吐</td><td>连续请求时每个 cycle 产生一个响应 (pipeline fill 后)</td></tr>
+    <tr><td><code>CHK_HIT_CONSISTENCY</code></td><td>一致性</td><td>命中时 translated_addr 必须等于最近一次 insert 的值</td></tr>
+    <tr><td><code>CHK_INV_ACK_TIMING</code></td><td>时序</td><td>invalidation 完成后必须在规定 cycle 内返回 ACK</td></tr>
+    <tr><td><code>CHK_FLR_CLEANUP</code></td><td>功能</td><td>FLR 后对应 func_id 的所有 entry 不再命中</td></tr>
+    <tr><td><code>CHK_ATS_TOGGLE_CLEAN</code></td><td>功能</td><td>ATS disable 后所有查表返回 miss</td></tr>
+    <tr><td><code>CHK_DUPCHECK_RESULT</code></td><td>功能</td><td>重复地址 insert 时 dupcheck=1；新地址时 dupcheck=0</td></tr>
+    <tr><td><code>CHK_NRU_EVICTION</code></td><td>功能</td><td>set 满时 insert 正确替换 NRU victim；被替换的 entry 不再命中</td></tr>
+    <tr><td><code>CHK_64K_PREHIT</code></td><td>功能</td><td>当 addr+64K 已缓存时，pre_hit 正确置位</td></tr>
+    <tr><td><code>CHK_PV_ISOLATION</code></td><td>安全</td><td>PV 不匹配时绝不命中；不同 VF 间无地址泄漏</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- Part 2: Verification Plan -->
+<!-- ============================================================ -->
+<h2>Part 2: 验证计划</h2>
+
+<div class="card">
+  <div class="card-title">验证策略</div>
+  <p>采用 <strong>定向测试 + 约束随机测试</strong> 混合策略。先用定向测试覆盖基础功能和边界条件，再用约束随机测试提升覆盖率。覆盖率驱动验证 (CDV) 闭环。</p>
+</div>
+
+<!-- ============================================================ -->
+<!-- 2.1 Feature List -->
+<!-- ============================================================ -->
+<h3>2.1 功能点清单</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>功能分类</th><th>功能点</th><th>RTL 覆盖模块</th></tr></thead>
+  <tbody>
+    <tr><td>F1</td><td>查表</td><td>Hash 函数正确性 (FuncID[3:0] ^ VA[15:12] % 32)</td><td>atc_lookup_engine</td></tr>
+    <tr><td>F2</td><td>查表</td><td>64-way 并行 Tag 比较 (PV/PASID/FuncID/Addr)</td><td>atc_entry_tag, atc_set</td></tr>
+    <tr><td>F3</td><td>查表</td><td>STU 掩码地址比较 (4KB / 2MB / 1GB)</td><td>atc_entry_tag</td></tr>
+    <tr><td>F4</td><td>查表</td><td>64K 预查 (addr + 64K 同时比较)</td><td>atc_entry_tag, atc_lookup_engine</td></tr>
+    <tr><td>F5</td><td>查表</td><td>4-stage 流水线 (latency=4, throughput=1)</td><td>atc_lookup_engine</td></tr>
+    <tr><td>F6</td><td>查表</td><td>PV 机制：PV≠→MISS; PV=valid→全比; PV=invalid→跳过PASID</td><td>atc_entry_tag</td></tr>
+    <tr><td>F7</td><td>插入</td><td>重复检测：遍历 2048 entry / 4-cycle 完成</td><td>atc_dupcheck</td></tr>
+    <tr><td>F8</td><td>插入</td><td>NRU 替换策略选择 victim</td><td>atc_nru_replacer</td></tr>
+    <tr><td>F9</td><td>插入</td><td>TAG 写入 + SRAM 数据写入</td><td>atc_ctrl, atc_entry_array</td></tr>
+    <tr><td>F10</td><td>插入</td><td>重复地址覆盖旧 entry</td><td>atc_ctrl, atc_dupcheck</td></tr>
+    <tr><td>F11</td><td>失效</td><td>ATS Invalidation Request 匹配清除</td><td>atc_inv_handler</td></tr>
+    <tr><td>F12</td><td>失效</td><td>失效比较规则 (PV valid/invalid 两路)</td><td>atc_entry_tag (cmp_inv_mode)</td></tr>
+    <tr><td>F13</td><td>失效</td><td>ATS Enable Toggle → 全局清除</td><td>atc_inv_handler, atc_entry_array</td></tr>
+    <tr><td>F14</td><td>失效</td><td>FLR → 按 func_id 选择性清除</td><td>atc_inv_handler, atc_entry_array</td></tr>
+    <tr><td>F15</td><td>仲裁</td><td>优先级: FLR > ATS Toggle > Inv > Insert > Lookup</td><td>atc_req_arbiter</td></tr>
+    <tr><td>F16</td><td>仲裁</td><td>Lookup 与 Insert 并行 (不同 set)</td><td>atc_ctrl</td></tr>
+    <tr><td>F17</td><td>NRU</td><td>访问更新 (hit → NRU_ACTIVE, insert → NRU_ACTIVE)</td><td>atc_nru_replacer</td></tr>
+    <tr><td>F18</td><td>NRU</td><td>定期衰减 (1024 cycle, 仅 ACTIVE/PROTECT → IDLE <span class="resolved">v2.4</span>)</td><td>atc_ctrl</td></tr>
+    <tr><td>F21</td><td>Prefetch</td><td>prefetch_enable hash 切换 (4KB/64KB) <span class="resolved">v2.4</span></td><td>atc_lookup_engine, atc_ctrl</td></tr>
+    <tr><td>F22</td><td>Prefetch</td><td>prefetch 输出门控 <span class="resolved">v2.4</span></td><td>atc_ctrl</td></tr>
+    <tr><td>F23</td><td>查表</td><td>ats_enable 门控 pipeline func_id <span class="resolved">v2.4</span></td><td>atc_ctrl</td></tr>
+    <tr><td>F19</td><td>SRAM</td><td>TAG (寄存器) + DATA (SRAM) 一致性</td><td>atc_entry_tag, atc_data_sram</td></tr>
+    <tr><td>F20</td><td>SRAM</td><td>同步读时序正确性 (rd_en S1, data return S2)</td><td>atc_data_sram, atc_lookup_engine</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 2.2 Test Cases -->
+<!-- ============================================================ -->
+<h3>2.2 测试用例</h3>
+
+<h4>2.2.1 冒烟测试 (Smoke) — P0</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>关键检查点</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p0"><td>TC_SMK_01</td><td>复位后空闲状态</td><td>复位释放后 DUT 输出全 0，无挂起操作</td><td>所有输出为 0；atc_active=0</td></tr>
+    <tr class="test-prio-p0"><td>TC_SMK_02</td><td>单 entry 插入+命中</td><td>Insert 1 个 entry → Lookup 同一地址 → 命中</td><td>hit=1, translated_addr 正确</td></tr>
+    <tr class="test-prio-p0"><td>TC_SMK_03</td><td>空缓存查表 miss</td><td>无任何 insert 时 lookup → miss</td><td>hit=0, pre_hit=0</td></tr>
+    <tr class="test-prio-p0"><td>TC_SMK_04</td><td>单 entry 失效</td><td>Insert → Invalidate → Lookup → miss</td><td>inv_ack=1, 后续 miss</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.2 查表功能 (Lookup) — P0</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>关键检查点</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p0"><td>TC_LU_01</td><td>Hash 分布均匀性</td><td>随机 2048 地址 insert，检查各 set 分布</td><td>每 set 约 64 entry，偏差 &lt;20%</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_02</td><td>PV=0 (SRIOV) 查表</td><td>Insert PV=0 → Lookup with matching func_id+addr, 不同 PASID</td><td>命中 (跳过 PASID)</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_03</td><td>PV≠0 (SIOV) 查表</td><td>Insert PV=5 → Lookup with PV=5 (matching), PV=3 (mismatch)</td><td>PV match→命中, PV mismatch→miss</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_04</td><td>STU 掩码 4KB</td><td>Insert STU=12 (4KB) addr=0x1000 → Lookup addr=0x1FFF</td><td>命中 (同一 4KB 页内)</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_05</td><td>STU 掩码 2MB</td><td>Insert STU=21 (2MB) addr=0x200000 → Lookup addr=0x2FFFFF</td><td>命中 (同一 2MB 段内)</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_06</td><td>STU 掩码跨页</td><td>Insert STU=12 addr=0x1000 → Lookup addr=0x2000</td><td>miss (跨 4KB 页)</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_07</td><td>64K 预查命中</td><td>Insert addr=0x10000 → Lookup addr=0x00000</td><td>hit=0, pre_hit=1</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_08</td><td>Pipeline 连续查表</td><td>连续 100 cycle 每 cycle 发 lookup</td><td>每 cycle 有响应; latency=4</td></tr>
+    <tr class="test-prio-p0"><td>TC_LU_09</td><td>全 Way 命中 (64/64)</td><td>同一 set 插入 64 个不同 entry → 查第 64 个</td><td>命中第 64 个 way</td></tr>
+    <tr class="test-prio-p1"><td>TC_LU_10</td><td>多 Set 并发</td><td>交替查不同 set</td><td>各 set 独立命中</td></tr>
+    <tr class="test-prio-p1"><td>TC_LU_11</td><td>FuncID 区分</td><td>Insert FuncID=3 addr=X → Lookup FuncID=4 addr=X</td><td>miss (FuncID 不匹配)</td></tr>
+    <tr class="test-prio-p1"><td>TC_LU_12</td><td>PASID 区分</td><td>Insert PV=1 PASID=10 → Lookup PV=1 PASID=20</td><td>miss (PASID 不匹配, PV valid)</td></tr>
+    <tr class="test-prio-p1"><td>TC_LU_13</td><td>Entry valid=0 不命中</td><td>失效后查表</td><td>miss (entry valid 被清除)</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.3 插入功能 (Insert) — P1</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>关键检查点</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p1"><td>TC_INS_01</td><td>地址不重复插入</td><td>Insert 新地址 → dupcheck 遍历确认不重复 → 写入</td><td>dupcheck=0; 后续命中</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_02</td><td>地址重复覆盖</td><td>Insert addr=X → Insert 同一 addr=X (更新 perm/STU) → Lookup</td><td>dupcheck=1; 新 perm 生效</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_03</td><td>NRU victim 选择</td><td>填满 64 way → Insert 第 65 个 → 替换 FREE way</td><td>旧 entry miss; 新 entry 命中</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_04</td><td>NRU 优先级</td><td>填满 64 way → 访问部分 → Insert → 替换 FREE>IDLE>ACTIVE</td><td>优先级正确</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_05</td><td>NRU decay 后替换</td><td>填满 → 等待 1024 cycle → Insert</td><td>ACTIVE→IDLE; FREE 优先被替换</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_06</td><td>TAG + SRAM 同时写入</td><td>Insert → 查 TAG (命中) + 读 SRAM (正确 PA)</td><td>TAG 和 SRAM 一致</td></tr>
+    <tr class="test-prio-p1"><td>TC_INS_07</td><td>DupCheck 4-cycle FSM</td><td>Insert → 监控 dupcheck 在 4 cycle 后返回结果</td><td>dc_rsp_valid 在 4 cycle 后</td></tr>
+    <tr class="test-prio-p2"><td>TC_INS_08</td><td>DupCheck 遍历完整性</td><td>Insert addr=X → Insert addr=X (但 X 在最后一个 set)</td><td>遍历全部 2048 entry 后检测到重复</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.4 失效功能 (Invalidation) — P1</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>关键检查点</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p1"><td>TC_INV_01</td><td>常规失效 (PV valid)</td><td>Insert → ATS Inv (PV valid, 全匹配) → Lookup</td><td>ack=1; 后续 miss</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_02</td><td>常规失效 (PV invalid)</td><td>Insert → ATS Inv (PV invalid, 仅 func_id 匹配)</td><td>仅 func_id 匹配即清除</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_03</td><td>失效不匹配</td><td>Insert → ATS Inv (不同 func_id)</td><td>entry 不受影响; 仍命中</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_04</td><td>ATS Toggle 0→1</td><td>Insert 多个 entry → ats_enable 0→1</td><td>所有 entry 清除; 全局 miss</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_05</td><td>ATS Toggle 1→0</td><td>Insert 多个 entry → ats_enable 1→0</td><td>所有 entry 清除</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_06</td><td>FLR 选择性清除</td><td>Insert FuncID=3,4,5 → FLR FuncID=4 → Lookup 3,4,5</td><td>3,5 仍命中; 4 miss</td></tr>
+    <tr class="test-prio-p1"><td>TC_INV_07</td><td>FLR 全部清除</td><td>Insert FuncID=7 × 100 entry → FLR FuncID=7</td><td>全部 100 entry miss</td></tr>
+    <tr class="test-prio-p2"><td>TC_INV_08</td><td>失效与查表并发</td><td>Lookup pipeline 中有请求时，Inv 优先级更高 → 先清后查</td><td>仲裁正确; Inv 先执行</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.5 仲裁功能 (Arbitration) — P1</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>关键检查点</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p1"><td>TC_ARB_01</td><td>FLR 最高优先级</td><td>Lookup 进行中 → FLR → FLR 先执行</td><td>FLR 抢占 Lookup</td></tr>
+    <tr class="test-prio-p1"><td>TC_ARB_02</td><td>Inv 优先于 Insert</td><td>Insert pending → Inv request → Inv 先处理</td><td>Inv 先于 Insert</td></tr>
+    <tr class="test-prio-p1"><td>TC_ARB_03</td><td>Insert 优先于 Lookup</td><td>Lookup 持续 → Insert 到达 → Insert 先于后续 Lookup</td><td>插入先执行</td></tr>
+    <tr class="test-prio-p2"><td>TC_ARB_04</td><td>Lookup + Insert 交错</td><td>随机混合 1000 次 Lookup 和 100 次 Insert</td><td>全部结果一致</td></tr>
+    <tr class="test-prio-p2"><td>TC_ARB_05</td><td>全部请求类型同时到达</td><td>同一 cycle 发 FLR+ATS Toggle+Inv+Insert+Lookup</td><td>FLR 被执行; 其他排队</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.6 边界条件 (Corner Cases) — P0/P1</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>P</th><th>描述</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p0"><td>TC_CRN_01</td><td>Set 全部 way 填满后插入</td><td>P0</td><td>64 way 满 → Insert → NRU 全局清零后替换</td></tr>
+    <tr class="test-prio-p0"><td>TC_CRN_02</td><td>地址全 0 / 全 1</td><td>P0</td><td>Insert addr=0, addr=~0 → 查表正常</td></tr>
+    <tr class="test-prio-p0"><td>TC_CRN_03</td><td>PV/PASID 边界值</td><td>P0</td><td>PV=0xFFFF, PASID=0xFFFF 查表</td></tr>
+    <tr class="test-prio-p1"><td>TC_CRN_04</td><td>STU=0 (1B) / STU=31 (2GB)</td><td>P1</td><td>极限 STU 值掩码正确性</td></tr>
+    <tr class="test-prio-p1"><td>TC_CRN_05</td><td>同一 set 64 次重复地址插入</td><td>P1</td><td>每次都 dupcheck=1, 正确覆盖</td></tr>
+    <tr class="test-prio-p1"><td>TC_CRN_06</td><td>FLR 不存在的 func_id</td><td>P1</td><td>FLR func_id=0xFF → 无 entry 受影响</td></tr>
+    <tr class="test-prio-p1"><td>TC_CRN_07</td><td>连续 2048 次 insert (满缓存)</td><td>P1</td><td>全部命中; NRU 正确管理</td></tr>
+    <tr class="test-prio-p1"><td>TC_CRN_08</td><td>Insert 地址与查表地址 64K 对齐</td><td>P1</td><td>pre_hit 边界检查</td></tr>
+    <tr class="test-prio-p2"><td>TC_CRN_09</td><td>Back-to-back FLR</td><td>P2</td><td>连续 2 次 FLR (不同 func_id) → 都正确清除</td></tr>
+    <tr class="test-prio-p2"><td>TC_CRN_10</td><td>ATS Toggle 快速切换</td><td>P2</td><td>ats_enable 0→1→0→1 序列 → entry 每次都清空</td></tr>
+  </tbody>
+</table>
+
+<h4>2.2.7 随机测试 (Random) — P0</h4>
+<table>
+  <thead><tr><th>ID</th><th>测试名</th><th>描述</th><th>迭代</th></tr></thead>
+  <tbody>
+    <tr class="test-prio-p0"><td>TC_RND_01</td><td>随机查表+插入+失效</td><td>随机混合 DMA Lookup + ATS Insert + ATS Inv，约束随机地址、PV、PASID、FuncID、STU</td><td>10,000</td></tr>
+    <tr class="test-prio-p0"><td>TC_RND_02</td><td>多 VF 随机负载</td><td>64 VF 随机查表+插入，每个 VF 独立 PV/PASID</td><td>50,000</td></tr>
+    <tr class="test-prio-p0"><td>TC_RND_03</td><td>随机 FLR 注入</td><td>随机时刻注入 FLR，验证对应 VF 的 entry 全部清除</td><td>1,000 FLR</td></tr>
+    <tr class="test-prio-p1"><td>TC_RND_04</td><td>随机 ATS Toggle</td><td>随机时刻切换 ATS enable，验证全局清除</td><td>500 toggle</td></tr>
+    <tr class="test-prio-p0"><td>TC_PREF_01</td><td>Prefetch 16地址命中</td><td>Insert addr+64K → prefetch_enable=1 → Lookup addr → prefetch_hit[15]=1</td><td>prefetch_hit 位正确</td></tr>
+    <tr class="test-prio-p0"><td>TC_PREF_02</td><td>Prefetch 禁止</td><td>prefetch_enable=0 → Lookup → 所有 prefetch 输出为 0</td><td>prefetch_hit=0</td></tr>
+    <tr class="test-prio-p0"><td>TC_ATSEN_01</td><td>Per-function ATS 使能</td><td>ats_enable[func3]=0 → func3 lookup miss; func4 仍命中</td><td>per-function 门控</td></tr>
+    <tr class="test-prio-p0"><td>TC_RL_01</td><td>Relook 基本功能</td><td>Insert → Relook 同一地址 → hit=1, pre_hit=0</td><td>relook 正确命中</td></tr>
+    <tr class="test-prio-p0"><td>TC_RDY_01</td><td>Flow-control ready</td><td>复位后 idle 态 ready=1；正常操作期间 ready=1</td><td>4 通道 ready 信号正确</td></tr>
+    <tr class="test-prio-p0"><td>TC_FLR_DONE_01</td><td>FLR Done 信号</td><td>FLR 完成后 csr_flr_req_done 脉冲；entry 被清除</td><td>FLR 完成指示正确</td></tr>
+    <tr class="test-prio-p1"><td>TC_PREF_VAL</td><td>Prefetch Valid</td><td>prefetch_enable=0→全0; enable=1→对应 bit 有效</td><td>prefetch_rsp_valid/hit 正确</td></tr>
+    <tr class="test-prio-p0"><td>TC_RL_02</td><td>Relook 优先级</td><td>Lookup + Relook 同时 → Relook 先于 Lookup</td><td>RELOOK > LOOKUP</td></tr>
+    <tr class="test-prio-p0"><td>TC_ATSEN_02</td><td>Per-function ATS toggle</td><td>ats_enable[func5] 0→1→0 → func5 entries 清除</td><td>per-function 失效</td></tr>
+    <tr class="test-prio-p1"><td>TC_RND_05</td><td>随机 STU 混合</td><td>不同 function 使用不同 STU (4K/2M/1G 混合)</td><td>5,000</td></tr>
+    <tr class="test-prio-p0"><td>TC_NRU_01</td><td>NRU insert 更新 <span class="resolved">v2.4</span></td><td>连续 insert 同一 set → 验证 NRU 更新为 ACTIVE → way 不被重复覆盖</td><td>不覆盖已写 entry</td></tr>
+    <tr class="test-prio-p0"><td>TC_NRU_02</td><td>NRU decay 保留 FREE <span class="resolved">v2.4</span></td><td>填满 → 部分访问 → decay → Insert → FREE 优先被选</td><td>FREE 优先级高于 IDLE</td></tr>
+    <tr class="test-prio-p0"><td>TC_NRU_03</td><td>NRU decay ACTIVE→IDLE <span class="resolved">v2.4</span></td><td>全部 ACTIVE → decay → 验证 used=0,not_last=0 → IDLE 被选</td><td>decay 不产生 FREE</td></tr>
+    <tr class="test-prio-p0"><td>TC_PREFH_01</td><td>Prefetch hash 64KB <span class="resolved">v2.4</span></td><td>prefetch_enable=1 → Insert 当前+预取地址 → 验证同 set → Lookup 命中</td><td>17 地址在同一 set</td></tr>
+    <tr class="test-prio-p0"><td>TC_PREFH_02</td><td>Prefetch hash 4KB fallback <span class="resolved">v2.4</span></td><td>prefetch_enable=0 → 验证仍使用 4KB hash</td><td>不同 func 不同 hash</td></tr>
+    <tr class="test-prio-p0"><td>TC_ATSEN_03</td><td>ats_enable func_id 正确 <span class="resolved">v2.4</span></td><td>Insert func3→Lookup func3 (ats_enable[3]=0)→miss; func4→hit</td><td>per-func gating 正确</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 2.3 Coverage -->
+<!-- ============================================================ -->
+<h3>2.3 覆盖目标</h3>
+
+<h4>2.3.1 功能覆盖率 (Functional Coverage)</h4>
+<table>
+  <thead><tr><th>Covergroup</th><th>覆盖点</th><th>仓 (Bins)</th><th>目标</th></tr></thead>
+  <tbody>
+    <tr><td><code>cg_lookup_result</code></td><td>查表结果</td><td>HIT, MISS, PRE_HIT, MULTI_HIT</td><td>100%</td></tr>
+    <tr><td><code>cg_pv_mode</code></td><td>PV 模式</td><td>PV=0, PV≠0, PV mismatch</td><td>100%</td></tr>
+    <tr><td><code>cg_stu_value</code></td><td>STU 编码</td><td>12(4K), 21(2M), 30(1G), others</td><td>100%</td></tr>
+    <tr><td><code>cg_set_occupancy</code></td><td>Set 占用率</td><td>0%, 1-25%, 26-50%, 51-75%, 76-99%, 100%</td><td>100%</td></tr>
+    <tr><td><code>cg_nru_state</code></td><td>NRU 状态覆盖</td><td>FREE→ACTIVE, IDLE→ACTIVE, ACTIVE→IDLE (decay)</td><td>100%</td></tr>
+    <tr><td><code>cg_dupcheck</code></td><td>重复检测结果</td><td>DUPLICATE, UNIQUE, traversal subsets</td><td>100%</td></tr>
+    <tr><td><code>cg_inv_type</code></td><td>失效类型</td><td>REG_INV, FLR, ATS_TOGGLE</td><td>100%</td></tr>
+    <tr><td><code>cg_inv_pv_mode</code></td><td>失效 PV 模式</td><td>INV_PV_VALID, INV_PV_INVALID</td><td>100%</td></tr>
+    <tr><td><code>cg_arb_priority</code></td><td>仲裁优先级触发</td><td>FLR wins, INV wins, INS wins, LU wins</td><td>100%</td></tr>
+    <tr><td><code>cg_func_id_cross</code></td><td>跨 VF 访问</td><td>cross FuncID[0:63] × hit/miss</td><td>100%</td></tr>
+    <tr><td><code>cg_sram_access</code></td><td>SRAM 读/写</td><td>rd, wr, rd+wr same addr</td><td>100%</td></tr>
+    <tr><td><code>cg_prefetch</code></td><td>预取命中分布</td><td>cross addr_offset[0:16] × hit/miss</td><td>100%</td></tr>
+    <tr><td><code>cg_ats_enable</code></td><td>Per-function ATS 使能</td><td>cross func_id[0:63] × enabled/disabled</td><td>100%</td></tr>
+    <tr><td><code>cg_pipeline</code></td><td>流水线状态</td><td>empty, partial, full, bubble</td><td>100%</td></tr>
+  </tbody>
+</table>
+
+<h4>2.3.2 代码覆盖率 (Code Coverage)</h4>
+<table>
+  <thead><tr><th>指标</th><th>目标</th></tr></thead>
+  <tbody>
+    <tr><td>行覆盖率 (Line)</td><td>&ge; 95%</td></tr>
+    <tr><td>分支覆盖率 (Branch)</td><td>&ge; 90%</td></tr>
+    <tr><td>FSM 状态覆盖率 (State)</td><td>100%</td></tr>
+    <tr><td>表达式覆盖率 (Expression)</td><td>&ge; 85%</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<!-- 2.4 Verification Flow -->
+<!-- ============================================================ -->
+<h3>2.4 验证流程</h3>
+
+<pre>
+Phase 1: 冒烟 (Day 1-2)
+  ├── TC_SMK_01 ~ 04
+  └── 目标：DUT 基本连通，无编译/elab 错误
+
+Phase 2: 定向功能 (Day 3-7)
+  ├── TC_LU_01 ~ 13 (查表全功能)
+  ├── TC_INS_01 ~ 08 (插入全功能)
+  ├── TC_INV_01 ~ 08 (失效全功能)
+  ├── TC_ARB_01 ~ 05 (仲裁全功能)
+  └── 目标：所有定向用例 PASS，功能覆盖 60%
+
+Phase 3: 边界条件 (Day 8-10)
+  ├── TC_CRN_01 ~ 10
+  └── 目标：边界用例 PASS，无死锁/竞争
+
+Phase 4: 随机回归 (Day 11-14)
+  ├── TC_RND_01 ~ 05 (大量随机 seed)
+  └── 目标：功能覆盖 100%，代码覆盖达标
+
+Phase 5: 收尾 (Day 15)
+  ├── 覆盖率 gap 分析
+  ├── 定向补充用例
+  └── 目标：全部覆盖率达标，签收
+</pre>
+
+<!-- ============================================================ -->
+<!-- 2.5 Verification RTL File List -->
+<!-- ============================================================ -->
+<h3>2.5 验证 RTL 文件清单</h3>
+
+<table>
+  <thead><tr><th>文件</th><th>类型</th><th>功能</th></tr></thead>
+  <tbody>
+    <tr><td><code>tb/atc_test_pkg.sv</code></td><td>Package</td><td>测试参数、事务类、序列基类定义</td></tr>
+    <tr><td><code>tb/tb_atc_top.sv</code></td><td>Top TB</td><td>DUT 实例化、时钟生成、接口绑定</td></tr>
+    <tr><td><code>tb/atc_if.sv</code></td><td>Interface</td><td>DMA/ATS/CSR 接口定义 (Signal-level)</td></tr>
+    <tr><td><code>tb/dma_agent.sv</code></td><td>Agent</td><td>DMA Driver + Monitor</td></tr>
+    <tr><td><code>tb/ats_agent.sv</code></td><td>Agent</td><td>ATS Driver + Monitor</td></tr>
+    <tr><td><code>tb/csr_agent.sv</code></td><td>Agent</td><td>CSR Driver</td></tr>
+    <tr><td><code>tb/atc_scoreboard.sv</code></td><td>Scoreboard</td><td>参考模型 + 结果比对</td></tr>
+    <tr><td><code>tb/atc_monitor.sv</code></td><td>Monitor</td><td>DUT 输出采样</td></tr>
+    <tr><td><code>tb/atc_checker.sv</code></td><td>Checker</td><td>SVA 断言 + 协议检查</td></tr>
+    <tr><td><code>tb/atc_cov.sv</code></td><td>Coverage</td><td>功能覆盖率收集</td></tr>
+    <tr><td><code>tb/filelist_tb.f</code></td><td>Filelist</td><td>验证环境编译文件列表</td></tr>
+  </tbody>
+</table>
+
+<hr>
+<p style="text-align:center; color:var(--accent-cyan); font-size:0.9em;">ATC Verification Environment & Plan v2.3 · 2026-07-02</p>
+<p style="text-align:center; color:var(--text-secondary); font-size:0.85em;">v2.3 新增: NRU insert/decay 修复测试, prefetch hash 切换测试, ats_enable func_id 跟踪测试, 4-stage pipeline 更新; v2.2: Flow-control ready/FLR done/Prefetch valid; v2.1: Relook; v2.0: 17-addr prefetch</p>
+
+</div>
+</body>
+</html>
